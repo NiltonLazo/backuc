@@ -1,0 +1,10 @@
+# Forzar archivos de código a usar LF
+*.js     text eol=lf
+*.json   text eol=lf
+*.sql    text eol=lf
+*.prisma text eol=lf
+
+# Dejar archivos binarios sin cambios
+*.png    binary
+*.jpg    binary
+*.gif    binary

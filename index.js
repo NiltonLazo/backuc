@@ -1,8 +1,12 @@
 const express = require('express');
+const cors = require("cors");
+const authRoutes = require("./routes/auth");
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
 const app = express();
+app.use(express.json());
+app.use(cors());
 
 // Configurar dinámicamente la conexión a la base de datos
 const DATABASE_URL =
@@ -26,38 +30,15 @@ const prisma = new PrismaClient({
     },
 });
 
-const port = process.env.PORT || 3000;
+//Rutas
+app.use("/auth", authRoutes);
 
-app.use(express.json());
-
-// Rutas
+// Ruta de prueba
 app.get('/', async (req, res) => {
     res.send('¡Servidor funcionando correctamente!');
 });
 
-app.post('/users', async (req, res) => {
-    try {
-        const { name, email } = req.body;
-        const newUser = await prisma.user.create({
-            data: { name, email },
-        });
-        res.status(201).json(newUser);
-    } catch (err) {
-        console.error(err);
-        res.status(500).send('Error al crear usuario');
-    }
-});
-
-app.get('/users', async (req, res) => {
-    try {
-        const users = await prisma.user.findMany();
-        res.json(users);
-    } catch (err) {
-        console.error(err);
-        res.status(500).send('Error al obtener usuarios');
-    }
-});
-
+const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`Servidor escuchando en http://localhost:${port}`);
 });

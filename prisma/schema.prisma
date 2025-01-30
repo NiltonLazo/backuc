@@ -14,9 +14,130 @@ datasource db {
   url      = env("DATABASE_URL_DOCKER")
 }
 
-model User {
-  id        Int      @id @default(autoincrement())
-  name      String
-  email     String   @unique
-  createdAt DateTime @default(now())
+model Usuario {
+  id         Int      @id @default(autoincrement())
+  nombre     String
+  correo     String   @unique
+  rol        Rol
+  carrera    String?
+  sede       String?
+  modalidad  Modalidad?
+  creadoEn   DateTime @default(now())
+
+  // Relación con Citas (Un usuario puede tener muchas citas como estudiante)
+  citas      Cita[]   @relation("UsuarioCitas")
+
+  // Relación con Notificaciones
+  notificaciones Notificacion[]
+}
+
+model Medico {
+  id            Int     @id @default(autoincrement())
+  usuarioId     Int     @unique
+  especialidad  String
+  horarioInicio String
+  horarioFin    String
+  creadoEn      DateTime @default(now())
+
+  // Relación con Citas (Un médico puede tener varias citas)
+  citas         Cita[] @relation("MedicoCitas")
+
+  // Relación con Recomendaciones (Un médico puede escribir varias recomendaciones)
+  recomendaciones Recomendacion[]
+}
+
+model Cita {
+  id         Int       @id @default(autoincrement())
+  estudiante Usuario   @relation("UsuarioCitas", fields: [estudianteId], references: [id])
+  estudianteId Int
+  medico     Medico    @relation("MedicoCitas", fields: [medicoId], references: [id])
+  medicoId   Int
+  motivo     String
+  fecha      DateTime
+  modalidad  Modalidad
+  estado     Estado
+  creadoEn   DateTime @default(now())
+
+  // Relación con Recomendaciones (Una cita puede tener muchas recomendaciones)
+  recomendaciones Recomendacion[]
+
+  // Relación con Reprogramaciones (Una cita puede haber sido reprogramada varias veces)
+  reprogramaciones Reprogramacion[]
+
+  // Relación con Notificaciones (Una cita puede tener varias notificaciones)
+  notificaciones Notificacion[]
+}
+
+model Recomendacion {
+  id        Int     @id @default(autoincrement())
+  cita      Cita    @relation(fields: [citaId], references: [id])
+  citaId    Int
+  medico    Medico  @relation(fields: [medicoId], references: [id])
+  medicoId  Int
+  contenido String
+  creadaEn  DateTime @default(now())
+}
+
+model Reprogramacion {
+  id         Int     @id @default(autoincrement())
+  cita       Cita    @relation(fields: [citaId], references: [id])
+  citaId     Int
+  nuevaFecha DateTime
+  nuevaHora  String
+  motivo     String
+  creadoEn   DateTime @default(now())
+}
+
+model Notificacion {
+  id        Int     @id @default(autoincrement())
+  usuario   Usuario @relation(fields: [usuarioId], references: [id])
+  usuarioId Int
+  cita      Cita?   @relation(fields: [citaId], references: [id])
+  citaId    Int?
+  mensaje   String
+  tipo      TipoNotificacion
+  estado    EstadoNotificacion
+  enviadoEn DateTime?
+}
+
+model Reporte {
+  id                Int     @id @default(autoincrement())
+  periodo           String
+  totalCitas       Int
+  citasCanceladas  Int
+  citasReprogramadas Int
+  creadoEn         DateTime @default(now())
+}
+
+enum Rol {
+  estudiante
+  usuario
+  medico
+  administrador
+}
+
+enum Modalidad {
+  presencial
+  semipresencial
+  a_distancia
+}
+
+enum Estado {
+  pendiente
+  confirmada
+  cancelada
+  reprogramada
+}
+
+enum TipoNotificacion {
+  recordatorio
+  confirmacion
+  cancelacion
+  otro
+}
+
+enum EstadoNotificacion {
+  pendiente
+  enviado
+  leido
 }

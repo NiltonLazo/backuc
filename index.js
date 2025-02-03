@@ -40,5 +40,5 @@ app.get('/', async (req, res) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-    console.log(`Servidor escuchando en http://localhost:${port}`);
+    console.log(`Servidor escuchando en http://10.0.2.2:${port}`);
 });

@@ -9,129 +9,364 @@ const prisma = new PrismaClient();
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Lista de correos de médicos registrados en la aplicación
-const listaMedicos = ["user1@continental.edu.pe", "user2@continental.edu.pe"];
+const listaMedicos = ["nlazo@continental.edu.pe", "user2@continental.edu.pe"];
 
 // Lista de correos de administrativos con acceso a la aplicación
 const listaAdministrativos = ["admin1@continental.edu.pe", "admin2@continental.edu.pe"];
 
-// Ruta para iniciar sesión con Google
+/**
+ * Ruta: GET /get-user
+ * Busca un usuario por su correo.
+ */
+router.get("/get-user", async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) {
+      return res.status(400).json({ message: "El correo es requerido" });
+    }
+    console.log("Buscando usuario con correo:", email);
+    const usuario = await prisma.usuario.findUnique({
+      where: { correo: email },
+    });
+    if (usuario) {
+      return res.json({ usuario });
+    } else {
+      return res.status(404).json({ message: "Usuario no encontrado" });
+    }
+  } catch (error) {
+    console.error("Error en /get-user:", error);
+    return res.status(500).json({ message: "Error en el servidor" });
+  }
+});
+
+/**
+ * Ruta: POST /google-signin
+ * Inicia sesión con Google.
+ */
 router.post("/google-signin", async (req, res) => {
-    const { token } = req.body;
+  const { token } = req.body;
+  try {
+    // Verificar el token de Google
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: process.env.GOOGLE_CLIENT_ID,
+    });
+    const payload = ticket.getPayload();
+    const { name, email, picture } = payload;
 
-    try {
-        // Verificar el token de Google
-        const ticket = await client.verifyIdToken({
-            idToken: token,
-            audience: process.env.GOOGLE_CLIENT_ID,
-        });
-
-        const payload = ticket.getPayload();
-        const { name, email, picture } = payload; // Extrae la URL de la foto de perfil
-
-        // Verificar que el correo sea institucional
-        if (!email.endsWith("@continental.edu.pe")) {
-            return res.status(403).json({ error: "Debe iniciar sesión con su correo institucional" });
-        }
-
-        // Determinar el rol del usuario basado en su correo
-        let rol = "usuario"; // Valor por defecto
-        let codigo = null; // Inicialmente sin código
-
-        if (listaMedicos.includes(email)) {
-            rol = "medico";
-        } else if (listaAdministrativos.includes(email)) {
-            rol = "administrador";
-        } else if (/^\d+@continental\.edu\.pe$/.test(email)) {
-            // Si el correo es un número (DNI), es estudiante
-            rol = "estudiante";
-            codigo = email.split("@")[0]; // Extrae el código del correo
-        }
-
-        // Busca si el usuario ya existe en la base de datos
-        let usuario = await prisma.usuario.findUnique({ where: { correo: email } });
-
-        if (!usuario) {
-            // Crea el usuario con código y foto si es nuevo
-            usuario = await prisma.usuario.create({
-                data: {
-                    nombre: name,
-                    correo: email,
-                    rol,
-                    codigo, // Guarda el código si es estudiante
-                    foto: picture // Guarda la foto de perfil
-                },
-            });
-        } else {
-            // Actualizar el rol, código y foto si el usuario ya existe
-            usuario = await prisma.usuario.update({
-                where: { correo: email },
-                data: {
-                    rol,
-                    codigo: codigo || usuario.codigo, // No sobreescribir si ya tiene un código
-                    foto: picture // Siempre actualizar la foto para que esté actualizada
-                },
-            });
-        }
-
-        // Generar JWT con el rol del usuario
-        const jwtToken = jwt.sign(
-            { id: usuario.id, email: usuario.correo, rol: usuario.rol },
-            process.env.JWT_SECRET,
-            { expiresIn: "7d" }
-        );
-
-        res.json({ token: jwtToken, usuario });
-    } catch (error) {
-        console.error("Error en autenticación con Google:", error);
-        res.status(401).json({ error: "Token inválido" });
+    // Verificar que el correo sea institucional
+    if (!email.endsWith("@continental.edu.pe")) {
+      return res.status(403).json({ error: "Debe iniciar sesión con su correo institucional" });
     }
+
+    // Determinar el rol basado en el correo
+    let rol = "usuario"; // Valor por defecto
+    let codigo = null;
+    if (listaMedicos.includes(email)) {
+      rol = "medico";
+    } else if (listaAdministrativos.includes(email)) {
+      rol = "administrador";
+    } else if (/^\d+@continental\.edu\.pe$/.test(email)) {
+      rol = "estudiante";
+      codigo = email.split("@")[0];
+    }
+
+    // Buscar el usuario en la base de datos
+    let usuario = await prisma.usuario.findUnique({ where: { correo: email } });
+    if (!usuario) {
+      // Si no existe, se devuelve un objeto con id null y los datos extraídos
+      usuario = {
+        id: null,
+        nombre: name,
+        correo: email,
+        rol,
+        codigo,
+        foto: picture,
+        telefono: null,
+        sede: null,
+        ciclo: null,
+        carrera: null,
+        modalidad: null,
+      };
+    }
+
+    // Generar JWT (con email y rol; id puede ser null)
+    const jwtToken = jwt.sign(
+      { email: usuario.correo, rol: usuario.rol },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+    res.json({ token: jwtToken, usuario });
+  } catch (error) {
+    console.error("Error en autenticación con Google:", error);
+    res.status(401).json({ error: "Token inválido" });
+  }
 });
 
-// Ruta para actualizar el perfil del usuario
+/**
+ * Ruta: PUT /update-profile
+ * Actualiza o crea el perfil del usuario.
+ */
 router.put("/update-profile", async (req, res) => {
-    const { id, telefono, sede, ciclo, carrera, modalidad } = req.body;
-
-    try {
-        let usuario = await prisma.usuario.findUnique({ where: { id } });
-
-        if (!usuario) {
-            return res.status(404).json({ error: "Usuario no encontrado" });
+  const { id, telefono, sede, ciclo, carrera, modalidad, nombre, correo, rol, codigo, foto } = req.body;
+  try {
+    if (!telefono || !sede) {
+      return res.status(400).json({ error: "Teléfono y sede son obligatorios" });
+    }
+    let usuario;
+    if (!id) {
+      // Si no existe id, se crea el usuario.
+      if (rol === "estudiante") {
+        if (!ciclo || !carrera || !modalidad) {
+          return res.status(400).json({ error: "Ciclo, carrera y modalidad son obligatorios para estudiantes" });
         }
-
-        if (!telefono || !sede) {
-            return res.status(400).json({ error: "Teléfono y sede son obligatorios" });
+      }
+      usuario = await prisma.usuario.create({
+        data: {
+          nombre,
+          correo,
+          rol,
+          codigo,
+          foto,
+          telefono,
+          sede,
+          ciclo: rol === "estudiante" ? parseInt(ciclo, 10) : null,
+          carrera: rol === "estudiante" ? carrera : null,
+          modalidad: rol === "estudiante" ? modalidad.toLowerCase().replace(" ", "_") : null,
+        },
+      });
+    } else {
+      // Si existe id, se actualiza el usuario.
+      let usuarioExistente = await prisma.usuario.findUnique({ where: { id } });
+      if (!usuarioExistente) {
+        return res.status(404).json({ error: "Usuario no encontrado" });
+      }
+      if (usuarioExistente.rol === "estudiante") {
+        if (!ciclo || !carrera || !modalidad) {
+          return res.status(400).json({ error: "Ciclo, carrera y modalidad son obligatorios para estudiantes" });
         }
-
-        let cicloInt = null;
-        if (usuario.rol === "estudiante") {
-            if (!ciclo || !carrera || !modalidad) {
-                return res.status(400).json({ error: "Ciclo, carrera y modalidad son obligatorios para estudiantes" });
-            }
-            cicloInt = parseInt(ciclo, 10);
-            if (isNaN(cicloInt)) {
-                return res.status(400).json({ error: "Ciclo debe ser un número válido" });
-            }
+        const cicloInt = parseInt(ciclo, 10);
+        if (isNaN(cicloInt)) {
+          return res.status(400).json({ error: "Ciclo debe ser un número válido" });
         }
-
-        // Convertir modalidad a minúsculas para coincidir con Prisma
-        const modalidadLower = modalidad ? modalidad.toLowerCase().replace(' ', '_') : null;
-
         usuario = await prisma.usuario.update({
-            where: { id },
-            data: {
-                telefono,
-                sede,
-                ciclo: usuario.rol === "estudiante" ? cicloInt : null,
-                carrera: usuario.rol === "estudiante" ? carrera : null,
-                modalidad: usuario.rol === "estudiante" ? modalidadLower : null,
-            },
+          where: { id },
+          data: {
+            telefono,
+            sede,
+            ciclo: cicloInt,
+            carrera,
+            modalidad: modalidad.toLowerCase().replace(" ", "_"),
+          },
         });
+      } else {
+        usuario = await prisma.usuario.update({
+          where: { id },
+          data: { telefono, sede },
+        });
+      }
+    }
+    res.json({ message: "Perfil actualizado correctamente", usuario });
+  } catch (error) {
+    console.error("Error al actualizar perfil:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
 
-        res.json({ message: "Perfil actualizado correctamente", usuario });
+/**
+ * La ruta /crear-medico se elimina porque en este esquema
+ * no existe un modelo separado para Medico; se utiliza el modelo Usuario.
+ * Para registrar o actualizar la información de un médico se debe usar /update-profile.
+ */
+
+/**
+ * Ruta: POST /asignar-horario
+ * Asigna un horario a un médico.
+ */
+router.post("/asignar-horario", async (req, res) => {
+  const { medicoId, dia, horaInicio, horaFin } = req.body;
+  try {
+    // Buscar usuario con rol "medico"
+    const medico = await prisma.usuario.findFirst({
+      where: { id: medicoId, rol: "medico" },
+    });
+    if (!medico) {
+      return res.status(404).json({ error: "Médico no encontrado." });
+    }
+    const horario = await prisma.horarioMedico.create({
+      data: {
+        medicoId,
+        dia,
+        horaInicio,
+        horaFin,
+      },
+    });
+    res.json({ message: "Horario asignado correctamente", horario });
+  } catch (error) {
+    console.error("Error al asignar horario:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+/**
+ * Ruta: GET /horarios-disponibles
+ * Obtiene los horarios disponibles de los médicos en una sede y fecha determinada.
+ */
+router.get("/horarios-disponibles", async (req, res) => {
+    const { modalidad, sede, fecha } = req.query;
+    try {
+      // Validar que la fecha esté en formato correcto.
+      if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+        return res.status(400).json({ error: "Fecha inválida. Debe estar en formato YYYY-MM-DD." });
+      }
+      
+      // Convertir la fecha a objeto Date y verificar.
+      const fechaConsulta = new Date(`${fecha}T00:00:00Z`);
+      if (isNaN(fechaConsulta.getTime())) {
+        return res.status(400).json({ error: "Fecha inválida. Usa el formato YYYY-MM-DD." });
+      }
+      console.log("Fecha procesada correctamente:", fechaConsulta);
+  
+      // Determinar el día de la semana sin acentos.
+      const diasSemana = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
+      const diaSemana = diasSemana[fechaConsulta.getUTCDay()];
+      console.log(`Día de la semana calculado: ${diaSemana}`);
+  
+      // Si la modalidad es presencial, filtrar por sede.
+      const filtroSede = modalidad.toLowerCase() === "presencial" ? { sede } : {};
+  
+      // Buscar los médicos (usuarios con rol "medico").
+      const medicos = await prisma.usuario.findMany({
+        where: {
+          rol: "medico",
+          ...filtroSede,
+        },
+        include: {
+          horarios: true,
+          bloqueos: true,
+          citasMedico: true,
+        },
+      });
+  
+      let horariosDisponibles = [];
+  
+      for (const medico of medicos) {
+        // Usar el nombre completo del médico y anteponer el prefijo si se desea.
+        const nombreCompleto = "Psicól. " + medico.nombre;
+  
+        // Filtrar los horarios que correspondan al día de la semana.
+        const horariosMedico = medico.horarios.filter(
+          h => h.dia.trim().toLowerCase() === diaSemana.trim().toLowerCase()
+        );
+        if (!horariosMedico.length) {
+          console.log(`Médico ${medico.nombre} no tiene horarios en ${diaSemana}`);
+          continue;
+        }
+  
+        // Preparar los bloqueos: convertir cada fecha bloqueada a "YYYY-MM-DD".
+        const bloqueosMedico = medico.bloqueos.map(
+          b => b.fecha?.toISOString().split("T")[0] || ""
+        );
+  
+        // Mapear las citas reservadas a objetos { fecha, hora }
+        const citasReservadas = medico.citasMedico.map(c => {
+          const fechaCita = new Date(c.fecha).toISOString().split("T")[0];
+          return { fecha: fechaCita, hora: c.hora };
+        });
+  
+        // Por cada horario asignado al médico, generar intervalos de 60 minutos.
+        for (const horario of horariosMedico) {
+          if (!horario.horaInicio || !horario.horaFin) {
+            console.warn(`Horario inválido para ${medico.nombre}:`, horario);
+            continue;
+          }
+          const hInicio = parseInt(horario.horaInicio.split(":")[0], 10);
+          const hFin = parseInt(horario.horaFin.split(":")[0], 10);
+  
+          // Iterar desde hInicio hasta hFin - 1 para generar intervalos.
+          for (let hora = hInicio; hora < hFin; hora++) {
+            const startHour = hora.toString().padStart(2, '0') + ":00";
+            const endHour = (hora + 1).toString().padStart(2, '0') + ":00";
+  
+            // Verificar si ya existe una cita para este médico en esta fecha y con la hora generada.
+            const isReserved = citasReservadas.some(r => r.fecha === fecha && r.hora === startHour);
+            if (!isReserved && !bloqueosMedico.includes(fecha)) {
+              horariosDisponibles.push({
+                id: `${medico.id}-${startHour}`,
+                hora: `${startHour} - ${endHour}`,
+                medicoId: medico.id,
+                nombreMedico: nombreCompleto,
+              });
+            }
+          }
+          console.log(`Horarios de ${medico.nombre}:`, horario);
+        }
+      }
+      console.log("Horarios generados antes de enviar al frontend:", horariosDisponibles);
+      res.json({ horarios: horariosDisponibles });
     } catch (error) {
-        console.error("Error al actualizar perfil:", error);
-        res.status(500).json({ error: "Error interno del servidor" });
+      console.error("Error al obtener horarios:", error);
+      res.status(500).json({ error: "Error interno del servidor" });
     }
 });
+  
+/**
+ * Ruta: POST /reservar-cita
+ * Reserva una cita para un estudiante con un médico.
+ */
+router.post("/reservar-cita", async (req, res) => {
+    const { estudianteId, medicoId, motivo, fecha, hora, modalidad } = req.body;
+    try {
+      // Buscar al estudiante
+      const estudiante = await prisma.usuario.findUnique({ where: { id: estudianteId } });
+      // Buscar al médico filtrando por rol "medico"
+      const medico = await prisma.usuario.findFirst({ where: { id: medicoId, rol: "medico" } });
+      if (!estudiante || !medico) {
+        return res.status(404).json({ error: "Estudiante o médico no encontrado." });
+      }
+      // Validar el formato de la fecha (se espera "YYYY-MM-DD")
+      const fechaDate = new Date(fecha);
+      if (isNaN(fechaDate.getTime())) {
+        return res.status(400).json({ error: "Fecha inválida. Debe estar en formato YYYY-MM-DD." });
+      }
+      // Validar que la hora tenga el formato "HH:mm"
+      if (!/^\d{2}:\d{2}$/.test(hora)) {
+        return res.status(400).json({ error: "Hora inválida. Debe estar en formato HH:mm." });
+      }
+      // Mapear la modalidad de la cita: si es "virtual", se guarda como virtual; de lo contrario, presencial.
+      const tipo = modalidad.toLowerCase() === "virtual" ? "virtual" : "presencial";
+      
+      // Verificar si ya existe una cita para este médico en esa fecha y hora
+      const citaExistente = await prisma.cita.findFirst({
+        where: {
+          medicoId,
+          fecha: fechaDate,
+          hora: hora
+        },
+      });
+      if (citaExistente) {
+        return res.status(400).json({ error: "El horario ya está reservado." });
+      }
+    
+      // Crear la cita usando los nuevos campos: fecha, hora y tipo.
+      const cita = await prisma.cita.create({
+        data: {
+          estudianteId,
+          medicoId,
+          motivo,
+          fecha: fechaDate, // Se almacena la fecha (sin la hora)
+          hora,            // Se almacena la hora en formato "HH:mm"
+          tipo,            // Nuevo campo que indica el tipo de cita
+          estado: "pendiente",
+        },
+      });
+    
+      res.json({ message: "Cita reservada correctamente", cita });
+    } catch (error) {
+      console.error("Error al reservar cita:", error);
+      res.status(500).json({ error: "Error interno del servidor" });
+    }
+});
+  
 
 module.exports = router;

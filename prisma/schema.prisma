@@ -16,81 +16,94 @@ datasource db {
 
 // Models
 model Usuario {
-  id         Int      @id @default(autoincrement())
-  nombre     String
-  correo     String   @unique
-  telefono   String?
-  rol        Rol
-  codigo     String?  @unique  // Nuevo campo (único para estudiantes, NULL para usuarios)
-  ciclo      Int?     // Nuevo campo (solo para estudiantes)
-  carrera    String?
-  sede       String?
-  modalidad  Modalidad?
-  foto       String?  // Nueva URL para la foto de Google
-  creadoEn   DateTime @default(now())
+  id              Int               @id @default(autoincrement())
+  nombre          String
+  correo          String            @unique
+  rol             Rol
+  sede            String?
+  telefono        String?
+  foto            String? 
+  codigo          String?           @unique // Solo para estudiantes
+  ciclo           Int?              // Solo para estudiantes
+  carrera         String?           // Solo para estudiantes
+  modalidad       Modalidad?
+  creadoEn        DateTime          @default(now())
 
-  // Relación con Citas (Un usuario puede tener muchas citas como estudiante)
-  citas      Cita[]   @relation("UsuarioCitas")
+  // 🔹 Campos específicos para los médicos
+  horarios        HorarioMedico[]
+  bloqueos        BloqueoHorario[]
+
+  // Relación con Citas (tanto como estudiante o como médico)
+  citasEstudiante Cita[]            @relation("UsuarioCitas")
+  citasMedico     Cita[]            @relation("MedicoCitas")
+
+  // 🔹 Relación con Recomendaciones (para los médicos)
+  recomendaciones Recomendacion[]
 
   // Relación con Notificaciones
-  notificaciones Notificacion[]
+  notificaciones  Notificacion[]
 }
 
-model Medico {
-  id            Int     @id @default(autoincrement())
-  usuarioId     Int     @unique
-  especialidad  String
-  horarioInicio String
-  horarioFin    String
-  creadoEn      DateTime @default(now())
+model HorarioMedico {
+  id         Int      @id @default(autoincrement())
+  medico     Usuario  @relation(fields: [medicoId], references: [id])
+  medicoId   Int
+  dia        DiaSemana
+  horaInicio String
+  horaFin    String
+  creadoEn   DateTime @default(now())
+}
 
-  // Relación con Citas (Un médico puede tener varias citas)
-  citas         Cita[] @relation("MedicoCitas")
-
-  // Relación con Recomendaciones (Un médico puede escribir varias recomendaciones)
-  recomendaciones Recomendacion[]
+model BloqueoHorario {
+  id       Int      @id @default(autoincrement())
+  medico   Usuario  @relation(fields: [medicoId], references: [id])
+  medicoId Int
+  fecha    DateTime // 🔹 Día específico en el que no trabajará
+  motivo   String?  // 🔹 Opcional: Motivo del bloqueo
+  creadoEn DateTime @default(now())
 }
 
 model Cita {
-  id         Int       @id @default(autoincrement())
-  estudiante Usuario   @relation("UsuarioCitas", fields: [estudianteId], references: [id])
-  estudianteId Int
-  medico     Medico    @relation("MedicoCitas", fields: [medicoId], references: [id])
-  medicoId   Int
-  motivo     String
-  fecha      DateTime
-  modalidad  Modalidad
-  estado     Estado
-  creadoEn   DateTime @default(now())
+  id            Int       @id @default(autoincrement())
+  estudianteId  Int       @map("estudiante_id")
+  estudiante    Usuario   @relation("UsuarioCitas", fields: [estudianteId], references: [id], map: "fk_cita_estudiante")
+  medicoId      Int       @map("medico_id")
+  medico        Usuario   @relation("MedicoCitas", fields: [medicoId], references: [id], map: "fk_cita_medico")
+  motivo        String
+  // Se almacena solo la fecha (sin hora) utilizando el tipo nativo DATE en MySQL.
+  fecha         DateTime  @db.Date  
+  // Se almacena la hora en formato "HH:mm" (por ejemplo "14:30") usando un VARCHAR(5).
+  hora          String    @db.VarChar(5)
+  // El nuevo campo que indica el tipo de cita: virtual o presencial.
+  tipo          TipoCita
+  estado        Estado
+  creadoEn      DateTime  @default(now())
 
-  // Relación con Recomendaciones (Una cita puede tener muchas recomendaciones)
-  recomendaciones Recomendacion[]
+  @@unique([medicoId, fecha, hora])
 
-  // Relación con Reprogramaciones (Una cita puede haber sido reprogramada varias veces)
-  reprogramaciones Reprogramacion[]
-
-  // Relación con Notificaciones (Una cita puede tener varias notificaciones)
-  notificaciones Notificacion[]
+  recomendaciones   Recomendacion[]
+  reprogramaciones  Reprogramacion[]
+  notificaciones    Notificacion[]
 }
 
 model Recomendacion {
-  id        Int     @id @default(autoincrement())
-  cita      Cita    @relation(fields: [citaId], references: [id])
-  citaId    Int
-  medico    Medico  @relation(fields: [medicoId], references: [id])
-  medicoId  Int
+  id       Int     @id @default(autoincrement())
+  cita     Cita    @relation(fields: [citaId], references: [id])
+  citaId   Int
+  medico   Usuario @relation(fields: [medicoId], references: [id])
+  medicoId Int
   contenido String
-  creadaEn  DateTime @default(now())
+  creadaEn DateTime @default(now())
 }
 
 model Reprogramacion {
-  id         Int     @id @default(autoincrement())
-  cita       Cita    @relation(fields: [citaId], references: [id])
-  citaId     Int
+  id        Int     @id @default(autoincrement())
+  cita      Cita    @relation(fields: [citaId], references: [id])
+  citaId    Int
   nuevaFecha DateTime
-  nuevaHora  String
-  motivo     String
-  creadoEn   DateTime @default(now())
+  nuevaHora String
+  motivo    String
+  creadoEn  DateTime @default(now())
 }
 
 model Notificacion {
@@ -106,15 +119,15 @@ model Notificacion {
 }
 
 model Reporte {
-  id                Int     @id @default(autoincrement())
-  periodo           String   
-  totalCitas       Int
-  citasAtendidas   Int      // 🔹 Cantidad de citas confirmadas
-  citasCanceladas  Int
+  id                 Int     @id @default(autoincrement())
+  periodo            String   
+  totalCitas         Int
+  citasAtendidas     Int      // 🔹 Cantidad de citas confirmadas
+  citasCanceladas    Int
   citasReprogramadas Int
-  citasVirtuales   Int      // 🔹 Número de citas en modalidad virtual
-  citasPresenciales Int     // 🔹 Número de citas en modalidad presencial
-  creadoEn         DateTime @default(now())
+  citasVirtuales     Int      // 🔹 Número de citas en modalidad virtual
+  citasPresenciales  Int      // 🔹 Número de citas en modalidad presencial
+  creadoEn           DateTime @default(now())
 }
 
 // Enums
@@ -122,6 +135,17 @@ enum Rol {
   estudiante
   usuario
   administrador
+  medico
+}
+
+enum DiaSemana {
+  lunes
+  martes
+  miercoles
+  jueves
+  viernes
+  sabado
+  domingo
 }
 
 enum Modalidad {
@@ -148,4 +172,9 @@ enum EstadoNotificacion {
   pendiente
   enviado
   leido
+}
+
+enum TipoCita {
+  virtual
+  presencial
 }

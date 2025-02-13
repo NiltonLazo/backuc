@@ -70,13 +70,11 @@ model Cita {
   medicoId      Int       @map("medico_id")
   medico        Usuario   @relation("MedicoCitas", fields: [medicoId], references: [id], map: "fk_cita_medico")
   motivo        String
-  // Se almacena solo la fecha (sin hora) utilizando el tipo nativo DATE en MySQL.
   fecha         DateTime  @db.Date  
-  // Se almacena la hora en formato "HH:mm" (por ejemplo "14:30") usando un VARCHAR(5).
   hora          String    @db.VarChar(5)
-  // El nuevo campo que indica el tipo de cita: virtual o presencial.
   tipo          TipoCita
   estado        Estado
+  meetLink      String?   // NUEVO: Enlace de Google Meet
   creadoEn      DateTime  @default(now())
 
   @@unique([medicoId, fecha, hora])

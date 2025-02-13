@@ -315,58 +315,100 @@ router.get("/horarios-disponibles", async (req, res) => {
  * Reserva una cita para un estudiante con un médico.
  */
 router.post("/reservar-cita", async (req, res) => {
-    const { estudianteId, medicoId, motivo, fecha, hora, modalidad } = req.body;
-    try {
-      // Buscar al estudiante
-      const estudiante = await prisma.usuario.findUnique({ where: { id: estudianteId } });
-      // Buscar al médico filtrando por rol "medico"
-      const medico = await prisma.usuario.findFirst({ where: { id: medicoId, rol: "medico" } });
-      if (!estudiante || !medico) {
-        return res.status(404).json({ error: "Estudiante o médico no encontrado." });
-      }
-      // Validar el formato de la fecha (se espera "YYYY-MM-DD")
-      const fechaDate = new Date(fecha);
-      if (isNaN(fechaDate.getTime())) {
-        return res.status(400).json({ error: "Fecha inválida. Debe estar en formato YYYY-MM-DD." });
-      }
-      // Validar que la hora tenga el formato "HH:mm"
-      if (!/^\d{2}:\d{2}$/.test(hora)) {
-        return res.status(400).json({ error: "Hora inválida. Debe estar en formato HH:mm." });
-      }
-      // Mapear la modalidad de la cita: si es "virtual", se guarda como virtual; de lo contrario, presencial.
-      const tipo = modalidad.toLowerCase() === "virtual" ? "virtual" : "presencial";
-      
-      // Verificar si ya existe una cita para este médico en esa fecha y hora
-      const citaExistente = await prisma.cita.findFirst({
-        where: {
-          medicoId,
-          fecha: fechaDate,
-          hora: hora
-        },
-      });
-      if (citaExistente) {
-        return res.status(400).json({ error: "El horario ya está reservado." });
-      }
-    
-      // Crear la cita usando los nuevos campos: fecha, hora y tipo.
-      const cita = await prisma.cita.create({
-        data: {
-          estudianteId,
-          medicoId,
-          motivo,
-          fecha: fechaDate, // Se almacena la fecha (sin la hora)
-          hora,            // Se almacena la hora en formato "HH:mm"
-          tipo,            // Nuevo campo que indica el tipo de cita
-          estado: "pendiente",
-        },
-      });
-    
-      res.json({ message: "Cita reservada correctamente", cita });
-    } catch (error) {
-      console.error("Error al reservar cita:", error);
-      res.status(500).json({ error: "Error interno del servidor" });
+  const { estudianteId, medicoId, motivo, fecha, hora, modalidad } = req.body;
+  try {
+    // Buscar al estudiante y al médico
+    const estudiante = await prisma.usuario.findUnique({ where: { id: estudianteId } });
+    const medico = await prisma.usuario.findFirst({ where: { id: medicoId, rol: "medico" } });
+    if (!estudiante || !medico) {
+      return res.status(404).json({ error: "Estudiante o médico no encontrado." });
     }
+    
+    // Validar la fecha (se espera formato "YYYY-MM-DD")
+    const fechaDate = new Date(fecha);
+    if (isNaN(fechaDate.getTime())) {
+      return res.status(400).json({ error: "Fecha inválida. Debe estar en formato YYYY-MM-DD." });
+    }
+    
+    // Validar que la hora tenga el formato "HH:mm"
+    if (!/^\d{2}:\d{2}$/.test(hora)) {
+      return res.status(400).json({ error: "Hora inválida. Debe estar en formato HH:mm." });
+    }
+    
+    // Verificar que la cita se reserve con al menos 48 horas de anticipación
+    const now = new Date();
+    const minReservaFull = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    // Convertir a fecha sin hora (00:00)
+    const minReservaDate = new Date(minReservaFull.getFullYear(), minReservaFull.getMonth(), minReservaFull.getDate());
+    if (fechaDate < minReservaDate) {
+      // Obtener el nombre del día en español para minReservaDate
+      const dias = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
+      const diaDisponible = dias[minReservaDate.getDay()];
+      return res.status(400).json({ error: `Para reservar una cita debe ser con 48 horas de anticipación, puede reservar su cita a partir del día ${diaDisponible}.` });
+    }
+    
+    // Verificar si ya existe una cita pendiente para este estudiante
+    const citaPendiente = await prisma.cita.findFirst({
+      where: { estudianteId, estado: "pendiente" }
+    });
+    if (citaPendiente) {
+      return res.status(400).json({ error: "Ya tienes una cita pendiente. No puedes reservar otra hasta que la actual sea confirmada." });
+    }
+    
+    // Verificar si el horario ya está reservado para este médico en esa fecha y hora
+    const citaExistente = await prisma.cita.findFirst({
+      where: { medicoId, fecha: fechaDate, hora }
+    });
+    if (citaExistente) {
+      return res.status(400).json({ error: "El horario ya está reservado." });
+    }
+    
+    // Mapear la modalidad (virtual o presencial)
+    const tipo = modalidad.toLowerCase() === "virtual" ? "virtual" : "presencial";
+    
+    // Crear la cita
+    const cita = await prisma.cita.create({
+      data: {
+        estudianteId,
+        medicoId,
+        motivo,
+        fecha: fechaDate,
+        hora,
+        tipo,
+        estado: "pendiente",
+      },
+    });
+    
+    res.json({ message: "Cita reservada correctamente", cita });
+  } catch (error) {
+    console.error("Error al reservar cita:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
 });
-  
+
+/**
+ * Ruta: GET /cita-pendiente
+ * Verifica si el estudiante tiene una cita pendiente.
+ * Se espera que se reciba un parámetro de consulta 'estudianteId'.
+ * Devuelve { pending: true } si existe una cita pendiente, o { pending: false } en caso contrario.
+ */
+router.get("/cita-pendiente", async (req, res) => {
+  const { estudianteId } = req.query;
+  if (!estudianteId) {
+    return res.status(400).json({ error: "El estudianteId es requerido" });
+  }
+  try {
+    const citaPendiente = await prisma.cita.findFirst({
+      where: {
+        estudianteId: parseInt(estudianteId, 10),
+        estado: "pendiente"
+      }
+    });
+    return res.json({ pending: citaPendiente != null });
+  } catch (error) {
+    console.error("Error al verificar cita pendiente:", error);
+    return res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
 
 module.exports = router;

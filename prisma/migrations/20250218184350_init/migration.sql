@@ -1,27 +1,72 @@
 -- CreateTable
-CREATE TABLE `Usuario` (
+CREATE TABLE `AllowedEmail` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `nombre` VARCHAR(191) NOT NULL,
-    `correo` VARCHAR(191) NOT NULL,
-    `rol` ENUM('estudiante', 'usuario', 'administrador', 'medico') NOT NULL,
-    `sede` VARCHAR(191) NULL,
-    `telefono` VARCHAR(191) NULL,
-    `foto` VARCHAR(191) NULL,
-    `codigo` VARCHAR(191) NULL,
-    `ciclo` INTEGER NULL,
-    `carrera` VARCHAR(191) NULL,
-    `modalidad` ENUM('presencial', 'semipresencial', 'a_distancia') NULL,
+    `email` VARCHAR(191) NOT NULL,
+    `role` ENUM('psicologo', 'administrador') NOT NULL,
+    `active` BOOLEAN NOT NULL DEFAULT true,
     `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
-    UNIQUE INDEX `Usuario_correo_key`(`correo`),
-    UNIQUE INDEX `Usuario_codigo_key`(`codigo`),
+    UNIQUE INDEX `AllowedEmail_email_key`(`email`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- CreateTable
-CREATE TABLE `HorarioMedico` (
+CREATE TABLE `Estudiante` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `medicoId` INTEGER NOT NULL,
+    `nombre` VARCHAR(191) NOT NULL,
+    `correo` VARCHAR(191) NOT NULL,
+    `telefono` VARCHAR(191) NULL,
+    `foto` VARCHAR(191) NULL,
+    `codigo` VARCHAR(191) NULL,
+    `sede` VARCHAR(191) NULL,
+    `ciclo` INTEGER NULL,
+    `carrera` VARCHAR(191) NULL,
+    `modalidad` ENUM('presencial', 'semipresencial', 'a_distancia') NULL,
+    `calendarAccessToken` TEXT NULL,
+    `calendarRefreshToken` VARCHAR(191) NULL,
+    `calendarTokenExpiry` DATETIME(3) NULL,
+    `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `Estudiante_correo_key`(`correo`),
+    UNIQUE INDEX `Estudiante_codigo_key`(`codigo`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Psicologo` (
+    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `nombre` VARCHAR(191) NOT NULL,
+    `correo` VARCHAR(191) NOT NULL,
+    `telefono` VARCHAR(191) NULL,
+    `foto` VARCHAR(191) NULL,
+    `sede` VARCHAR(191) NULL,
+    `calendarAccessToken` TEXT NULL,
+    `calendarRefreshToken` VARCHAR(191) NULL,
+    `calendarTokenExpiry` DATETIME(3) NULL,
+    `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `Psicologo_correo_key`(`correo`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Administrador` (
+    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `nombre` VARCHAR(191) NOT NULL,
+    `correo` VARCHAR(191) NOT NULL,
+    `telefono` VARCHAR(191) NULL,
+    `foto` VARCHAR(191) NULL,
+    `calendarAccessToken` TEXT NULL,
+    `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `Administrador_correo_key`(`correo`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Horario` (
+    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `psicologoId` INTEGER NOT NULL,
     `dia` ENUM('lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado', 'domingo') NOT NULL,
     `horaInicio` VARCHAR(191) NOT NULL,
     `horaFin` VARCHAR(191) NOT NULL,
@@ -33,7 +78,7 @@ CREATE TABLE `HorarioMedico` (
 -- CreateTable
 CREATE TABLE `BloqueoHorario` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `medicoId` INTEGER NOT NULL,
+    `psicologoId` INTEGER NOT NULL,
     `fecha` DATETIME(3) NOT NULL,
     `motivo` VARCHAR(191) NULL,
     `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
@@ -45,15 +90,16 @@ CREATE TABLE `BloqueoHorario` (
 CREATE TABLE `Cita` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `estudiante_id` INTEGER NOT NULL,
-    `medico_id` INTEGER NOT NULL,
+    `psicologo_id` INTEGER NOT NULL,
     `motivo` VARCHAR(191) NOT NULL,
     `fecha` DATE NOT NULL,
     `hora` VARCHAR(5) NOT NULL,
     `tipo` ENUM('virtual', 'presencial') NOT NULL,
     `estado` ENUM('pendiente', 'confirmada', 'cancelada', 'reprogramada') NOT NULL,
+    `meetLink` VARCHAR(191) NULL,
     `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
-    UNIQUE INDEX `Cita_medico_id_fecha_hora_key`(`medico_id`, `fecha`, `hora`),
+    UNIQUE INDEX `Cita_psicologo_id_fecha_hora_key`(`psicologo_id`, `fecha`, `hora`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -61,7 +107,7 @@ CREATE TABLE `Cita` (
 CREATE TABLE `Recomendacion` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `citaId` INTEGER NOT NULL,
-    `medicoId` INTEGER NOT NULL,
+    `psicologoId` INTEGER NOT NULL,
     `contenido` VARCHAR(191) NOT NULL,
     `creadaEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
@@ -83,7 +129,9 @@ CREATE TABLE `Reprogramacion` (
 -- CreateTable
 CREATE TABLE `Notificacion` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `usuarioId` INTEGER NOT NULL,
+    `estudianteId` INTEGER NULL,
+    `psicologoId` INTEGER NULL,
+    `administradorId` INTEGER NULL,
     `citaId` INTEGER NULL,
     `mensaje` VARCHAR(191) NOT NULL,
     `tipo` ENUM('recordatorio', 'confirmacion', 'cancelacion', 'otro') NOT NULL,
@@ -109,28 +157,34 @@ CREATE TABLE `Reporte` (
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- AddForeignKey
-ALTER TABLE `HorarioMedico` ADD CONSTRAINT `HorarioMedico_medicoId_fkey` FOREIGN KEY (`medicoId`) REFERENCES `Usuario`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `Horario` ADD CONSTRAINT `Horario_psicologoId_fkey` FOREIGN KEY (`psicologoId`) REFERENCES `Psicologo`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `BloqueoHorario` ADD CONSTRAINT `BloqueoHorario_medicoId_fkey` FOREIGN KEY (`medicoId`) REFERENCES `Usuario`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `BloqueoHorario` ADD CONSTRAINT `BloqueoHorario_psicologoId_fkey` FOREIGN KEY (`psicologoId`) REFERENCES `Psicologo`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `Cita` ADD CONSTRAINT `fk_cita_estudiante` FOREIGN KEY (`estudiante_id`) REFERENCES `Usuario`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `Cita` ADD CONSTRAINT `Cita_estudiante_id_fkey` FOREIGN KEY (`estudiante_id`) REFERENCES `Estudiante`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `Cita` ADD CONSTRAINT `fk_cita_medico` FOREIGN KEY (`medico_id`) REFERENCES `Usuario`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `Cita` ADD CONSTRAINT `Cita_psicologo_id_fkey` FOREIGN KEY (`psicologo_id`) REFERENCES `Psicologo`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Recomendacion` ADD CONSTRAINT `Recomendacion_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `Recomendacion` ADD CONSTRAINT `Recomendacion_medicoId_fkey` FOREIGN KEY (`medicoId`) REFERENCES `Usuario`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `Recomendacion` ADD CONSTRAINT `Recomendacion_psicologoId_fkey` FOREIGN KEY (`psicologoId`) REFERENCES `Psicologo`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Reprogramacion` ADD CONSTRAINT `Reprogramacion_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `Notificacion` ADD CONSTRAINT `Notificacion_usuarioId_fkey` FOREIGN KEY (`usuarioId`) REFERENCES `Usuario`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE `Notificacion` ADD CONSTRAINT `Notificacion_estudianteId_fkey` FOREIGN KEY (`estudianteId`) REFERENCES `Estudiante`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Notificacion` ADD CONSTRAINT `Notificacion_psicologoId_fkey` FOREIGN KEY (`psicologoId`) REFERENCES `Psicologo`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Notificacion` ADD CONSTRAINT `Notificacion_administradorId_fkey` FOREIGN KEY (`administradorId`) REFERENCES `Administrador`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Notificacion` ADD CONSTRAINT `Notificacion_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;

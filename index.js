@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require("cors");
 const authRoutes = require("./routes/auth");
+const psicologoRoutes = require("./routes/psicologo");
 const { PrismaClient } = require('@prisma/client');
 require('dotenv').config();
 
@@ -30,8 +31,11 @@ const prisma = new PrismaClient({
     },
 });
 
-//Rutas
+// Rutas
 app.use("/auth", authRoutes);
+
+// Rutas del psicólogo
+app.use("/psicologo", psicologoRoutes);
 
 // Ruta de prueba
 app.get('/', async (req, res) => {

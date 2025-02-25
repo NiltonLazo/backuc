@@ -95,8 +95,9 @@ CREATE TABLE `Cita` (
     `fecha` DATE NOT NULL,
     `hora` VARCHAR(5) NOT NULL,
     `tipo` ENUM('virtual', 'presencial') NOT NULL,
-    `estado` ENUM('pendiente', 'confirmada', 'cancelada', 'reprogramada') NOT NULL,
+    `estado` ENUM('pendiente', 'atendida', 'cancelada', 'reprogramada') NOT NULL,
     `meetLink` VARCHAR(191) NULL,
+    `citaPreviaId` INTEGER NULL,
     `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `Cita_psicologo_id_fecha_hora_key`(`psicologo_id`, `fecha`, `hora`),
@@ -156,6 +157,19 @@ CREATE TABLE `Reporte` (
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
+-- CreateTable
+CREATE TABLE `HistoriaClinica` (
+    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `citaId` INTEGER NOT NULL,
+    `diagnostico` VARCHAR(191) NOT NULL,
+    `recomendaciones` VARCHAR(191) NULL,
+    `observaciones` VARCHAR(191) NULL,
+    `creadaEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `HistoriaClinica_citaId_key`(`citaId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
 -- AddForeignKey
 ALTER TABLE `Horario` ADD CONSTRAINT `Horario_psicologoId_fkey` FOREIGN KEY (`psicologoId`) REFERENCES `Psicologo`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
@@ -167,6 +181,9 @@ ALTER TABLE `Cita` ADD CONSTRAINT `Cita_estudiante_id_fkey` FOREIGN KEY (`estudi
 
 -- AddForeignKey
 ALTER TABLE `Cita` ADD CONSTRAINT `Cita_psicologo_id_fkey` FOREIGN KEY (`psicologo_id`) REFERENCES `Psicologo`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Cita` ADD CONSTRAINT `Cita_citaPreviaId_fkey` FOREIGN KEY (`citaPreviaId`) REFERENCES `Cita`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `Recomendacion` ADD CONSTRAINT `Recomendacion_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -188,3 +205,6 @@ ALTER TABLE `Notificacion` ADD CONSTRAINT `Notificacion_administradorId_fkey` FO
 
 -- AddForeignKey
 ALTER TABLE `Notificacion` ADD CONSTRAINT `Notificacion_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `HistoriaClinica` ADD CONSTRAINT `HistoriaClinica_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;

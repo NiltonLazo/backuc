@@ -77,10 +77,10 @@ model Administrador {
   correo               String    @unique
   telefono             String?
   foto                 String?
-  calendarAccessToken  String?   @db.Text   // Agregado para guardar el token
+  calendarAccessToken  String?   @db.Text
   creadoEn             DateTime  @default(now())
 
-  // Relaciones (puedes agregar las que necesites)
+  // Relaciones (según necesites)
   notificaciones       Notificacion[]
 }
 
@@ -106,40 +106,49 @@ model BloqueoHorario {
 }
 
 model Cita {
-  id            Int         @id @default(autoincrement())
-  estudianteId  Int         @map("estudiante_id")
-  estudiante    Estudiante  @relation("CitasEstudiante", fields: [estudianteId], references: [id])
-  psicologoId   Int         @map("psicologo_id")
-  psicologo     Psicologo   @relation("CitasPsicologo", fields: [psicologoId], references: [id])
-  motivo        String
-  fecha         DateTime    @db.Date  
-  hora          String      @db.VarChar(5)
-  tipo          TipoCita
-  estado        Estado
-  meetLink      String?     // Enlace de Google Meet (o null para citas presenciales)
-  creadoEn      DateTime    @default(now())
+  id               Int         @id @default(autoincrement())
+  estudianteId     Int         @map("estudiante_id")
+  estudiante       Estudiante  @relation("CitasEstudiante", fields: [estudianteId], references: [id])
+  psicologoId      Int         @map("psicologo_id")
+  psicologo        Psicologo   @relation("CitasPsicologo", fields: [psicologoId], references: [id])
+  motivo           String
+  fecha            DateTime    @db.Date  
+  hora             String      @db.VarChar(5)
+  tipo             TipoCita
+  estado           Estado
+  meetLink         String?     
+  citaPreviaId     Int?
+  citaPrevia       Cita?       @relation("CitasSeguimiento", fields: [citaPreviaId], references: [id])
+  citasSeguimiento Cita[]      @relation("CitasSeguimiento")
+  creadoEn         DateTime    @default(now())
+
+  // Relación 1:1 con HistoriaClinica (información global)
+  historiaClinica  HistoriaClinica?
+
+  // Relación 1:1 con AtencionCita (información puntual de atención)
+  atencionCita     AtencionCita?
 
   @@unique([psicologoId, fecha, hora])
 
-  recomendaciones   Recomendacion[]
-  reprogramaciones  Reprogramacion[]
-  notificaciones    Notificacion[]
+  recomendaciones  Recomendacion[]
+  reprogramaciones Reprogramacion[]
+  notificaciones   Notificacion[]
 }
 
 model Recomendacion {
   id          Int        @id @default(autoincrement())
-  cita        Cita       @relation(fields: [citaId], references: [id])
   citaId      Int
-  psicologo   Psicologo  @relation(fields: [psicologoId], references: [id])
+  cita        Cita       @relation(fields: [citaId], references: [id])
   psicologoId Int
+  psicologo   Psicologo  @relation(fields: [psicologoId], references: [id])
   contenido   String
   creadaEn    DateTime   @default(now())
 }
 
 model Reprogramacion {
   id         Int      @id @default(autoincrement())
-  cita       Cita     @relation(fields: [citaId], references: [id])
   citaId     Int
+  cita       Cita     @relation(fields: [citaId], references: [id])
   nuevaFecha DateTime
   nuevaHora  String
   motivo     String
@@ -179,6 +188,35 @@ model Reporte {
   creadoEn           DateTime @default(now())
 }
 
+// Tabla para Historia Clínica (registro global)
+model HistoriaClinica {
+  id              Int      @id @default(autoincrement())
+  citaId          Int      @unique
+  cita            Cita     @relation(fields: [citaId], references: [id])
+  diagnostico     String
+  recomendaciones String? @db.Text
+  observaciones   String? @db.Text
+  creadaEn        DateTime @default(now())
+}
+
+// Nueva tabla para almacenar los detalles de la atención de la cita
+model AtencionCita {
+  id                    Int                       @id @default(autoincrement())
+  citaId                Int                       @unique
+  cita                  Cita                      @relation(fields: [citaId], references: [id])
+  // Campos para cuando la cita fue atendida:
+  areaDerivacion        AreaDerivacionEnum?
+  diagnosticoPresuntivo DiagnosticoPresuntivoEnum?
+  medioContacto         MedioContactoEnum?
+  recomendaciones         String? @db.Text
+  // Campo para cuando la cita no fue asistida:
+  observaciones         String? @db.Text
+  creadaEn              DateTime                  @default(now())
+  updatedAt             DateTime                  @updatedAt
+}
+
+// ENUMS
+
 enum DiaSemana {
   lunes
   martes
@@ -197,7 +235,8 @@ enum Modalidad {
 
 enum Estado {
   pendiente
-  confirmada
+  atendida
+  no_asistio
   cancelada
   reprogramada
 }
@@ -218,4 +257,60 @@ enum EstadoNotificacion {
 enum TipoCita {
   virtual
   presencial
+}
+
+// Enums para la tabla AtencionCita
+
+enum AreaDerivacionEnum {
+  tutoria
+  mentoria
+  topico
+  personal
+  CAS
+  defensoria_universitaria
+  vinculacion_internacional
+  docente
+  protocolo_de_salud_mental
+  servicio_social
+}
+
+enum DiagnosticoPresuntivoEnum {
+  familiar
+  academico
+  agresivo_pasivo
+  ansiedad
+  antisocial
+  autoestima
+  bipolar
+  borderline
+  compulsivo_autocontrol
+  dependencia_videojuegos_internet
+  dependencia_alcohol_drogas
+  relacion_afectiva
+  depresion
+  desorden_alimenticio
+  duelo_fallecimiento
+  distimia
+  esquizoide
+  esquizotipico
+  estres
+  histrionico
+  ludopatia
+  narcisista
+  orientacion_vocacional
+  paranoide
+  servicio_social
+  somatoformo
+  trabajo_o_laboral
+}
+
+enum MedioContactoEnum {
+  boca_a_boca
+  protocolo_de_salud_mental
+  entrevistas_de_vinculacion
+  correo_electronico
+  talleres_preventivos
+  citas_automatizadas
+  onboarding
+  app_movil
 }

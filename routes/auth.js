@@ -336,15 +336,23 @@ router.post("/google-signin", async (req, res) => {
  * Actualiza o crea el perfil del usuario según su rol.
  */
 router.put("/update-profile", async (req, res) => {
-  const { id, telefono, sede, ciclo, carrera, modalidad, nombre, correo, rol, codigo, foto } = req.body;
+  const { id, telefono, sede, ciclo, carrera, modalidad, rol } = req.body;
+  const phoneRegex = /^9\d{8}$/;
+  
+  // Validar que el teléfono esté presente y sea correcto
+  if (!telefono) {
+    return res.status(400).json({ error: "El teléfono es obligatorio" });
+  }
+  if (!phoneRegex.test(telefono)) {
+    return res.status(400).json({ error: "Ingrese un número de celular correcto" });
+  }
+
+  let usuario;
   try {
-    if (!telefono || !sede) {
-      return res.status(400).json({ error: "Teléfono y sede son obligatorios" });
-    }
-    let usuario;
     if (rol === "estudiante") {
-      if (!ciclo || !carrera || !modalidad) {
-        return res.status(400).json({ error: "Ciclo, carrera y modalidad son obligatorios para estudiantes" });
+      // Para estudiantes se requieren teléfono, sede, ciclo, carrera y modalidad
+      if (!sede || !ciclo || !carrera || !modalidad) {
+        return res.status(400).json({ error: "Teléfono, sede, ciclo, carrera y modalidad son obligatorios para estudiantes" });
       }
       const cicloInt = parseInt(ciclo, 10);
       if (isNaN(cicloInt)) {
@@ -361,16 +369,21 @@ router.put("/update-profile", async (req, res) => {
         },
       });
     } else if (rol === "psicologo") {
+      // Para psicólogos se requiere que se ingrese la sede
+      if (!sede) {
+        return res.status(400).json({ error: "La sede es obligatoria para psicólogos" });
+      }
       usuario = await prisma.psicologo.update({
         where: { id },
         data: { telefono, sede },
       });
     } else if (rol === "administrador") {
+      // Para administradores, se actualiza el teléfono; si se envía sede, se actualiza también
       usuario = await prisma.administrador.update({
         where: { id },
-        data: { telefono }
+        data: { telefono, ...(sede ? { sede } : {}) },
       });
-    }    
+    }
     res.json({ message: "Perfil actualizado correctamente", usuario });
   } catch (error) {
     console.error("Error al actualizar perfil:", error);
@@ -421,15 +434,24 @@ router.get("/horarios-disponibles", async (req, res) => {
     if (isNaN(fechaConsulta.getTime())) {
       return res.status(400).json({ error: "Fecha inválida. Usa el formato YYYY-MM-DD." });
     }
+    // Verificar que la fecha no exceda los 15 días a partir de hoy
+    const hoy = new Date();
+    const maxFecha = new Date();
+    maxFecha.setDate(hoy.getDate() + 15);
+    if (fechaConsulta > maxFecha) {
+      return res.status(400).json({ error: "Solo se pueden ver horarios hasta 15 días a partir de hoy." });
+    }
     console.log("Fecha procesada:", fechaConsulta);
     
     const diasSemana = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
     const diaSemana = diasSemana[fechaConsulta.getDay()];
     console.log("Día de la semana:", diaSemana);
     
+    /* Si más adelante se requiere que en virtual se muestre los psicologos de todas las sedes
     const filtroSede = (modalidad.toLowerCase() === "presencial" && sede && sede.trim() !== "")
       ? { sede: sede.trim() }
-      : {};
+      : {}; */
+    const filtroSede = sede && sede.trim() !== "" ? { sede: sede.trim() } : {};
     console.log("Filtro de sede:", filtroSede);
     
     const psicologos = await prisma.psicologo.findMany({
@@ -510,10 +532,18 @@ router.post("/reservar-cita", async (req, res) => {
     if (!estudiante || !psicologo) {
       return res.status(404).json({ error: "Estudiante o psicólogo no encontrado." });
     }
-    
+
     const fechaDate = new Date(`${fecha}T00:00:00-05:00`);
     if (isNaN(fechaDate.getTime())) {
       return res.status(400).json({ error: "Fecha inválida. Debe estar en formato YYYY-MM-DD." });
+    }
+    
+    // Validar que la fecha no sea mayor a 15 días desde hoy
+    const hoy = new Date();
+    const maxFecha = new Date();
+    maxFecha.setDate(hoy.getDate() + 15);
+    if (fechaDate > maxFecha) {
+      return res.status(400).json({ error: "Solo se puede reservar una cita hasta 15 días a partir de hoy." });
     }
     
     if (!/^\d{2}:\d{2}$/.test(hora)) {

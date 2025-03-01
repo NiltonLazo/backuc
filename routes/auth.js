@@ -12,16 +12,37 @@ const client = new OAuth2Client(
   process.env.GOOGLE_CLIENT_SECRET
 );
 
-// Helper: Obtener eventos del Calendar usando OAuth2Client
-async function getCalendarEvents(accessToken, fecha) {
+// Helper: Obtener eventos de Disponibilidad (los que contienen "CITAS")
+async function getAvailableEvents(accessToken, fecha) {
   try {
     const oauth2Client = new OAuth2Client();
     oauth2Client.setCredentials({ access_token: accessToken });
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-    const timeMin = new Date(fecha);
-    timeMin.setHours(0, 0, 0, 0);
-    const timeMax = new Date(fecha);
-    timeMax.setHours(23, 59, 59, 999);
+    const timeMin = new Date(`${fecha}T00:00:00-05:00`);
+    const timeMax = new Date(`${fecha}T23:59:59-05:00`);
+    const response = await calendar.events.list({
+      calendarId: 'primary',
+      timeMin: timeMin.toISOString(),
+      timeMax: timeMax.toISOString(),
+      singleEvents: true,
+      orderBy: 'startTime',
+      q: 'CITAS'
+    });
+    return response.data.items || [];
+  } catch (error) {
+    console.error("Error al obtener eventos disponibles:", error.message);
+    return [];
+  }
+}
+
+// Helper: Obtener eventos Ocupados (todos, menos los de disponibilidad)
+async function getBusyEvents(accessToken, fecha) {
+  try {
+    const oauth2Client = new OAuth2Client();
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    const timeMin = new Date(`${fecha}T00:00:00-05:00`);
+    const timeMax = new Date(`${fecha}T23:59:59-05:00`);
     const response = await calendar.events.list({
       calendarId: 'primary',
       timeMin: timeMin.toISOString(),
@@ -29,27 +50,15 @@ async function getCalendarEvents(accessToken, fecha) {
       singleEvents: true,
       orderBy: 'startTime'
     });
-    return response.data.items || [];
+    const events = response.data.items || [];
+    // Excluir eventos que sean de disponibilidad (es decir, aquellos cuyo título incluya "CITAS")
+    return events.filter(event => {
+      return !(event.summary && event.summary.toUpperCase().includes("CITAS"));
+    });
   } catch (error) {
-    console.error("Error al obtener eventos de Calendar:", error.message);
-    if (error.response && error.response.data) {
-      console.error("Detalles del error:", error.response.data);
-    }
+    console.error("Error al obtener eventos ocupados:", error.message);
     return [];
   }
-}
-
-// Helper: Verificar conflicto entre intervalo y eventos
-function intervalConflicts(intervalStart, intervalEnd, events) {
-  for (const event of events) {
-    if (!event.start || !event.end) continue;
-    let eventStart = event.start.dateTime ? new Date(event.start.dateTime) : new Date(event.start.date);
-    let eventEnd = event.end.dateTime ? new Date(event.end.dateTime) : new Date(event.end.date);
-    if (intervalStart < eventEnd && intervalEnd > eventStart) {
-      return true;
-    }
-  }
-  return false;
 }
 
 // Helper: Crear evento en Google Calendar (condicionalmente con Google Meet)
@@ -59,7 +68,6 @@ async function createCalendarEvent(accessToken, summary, description, startDateT
     oauth2Client.setCredentials({ access_token: accessToken });
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     
-    // Construir el objeto event
     const event = {
       summary: summary,
       description: description,
@@ -68,7 +76,6 @@ async function createCalendarEvent(accessToken, summary, description, startDateT
       attendees: attendeesEmails.map(email => ({ email })),
     };
     
-    // Si la cita es virtual, incluir datos para generar un Google Meet
     if (isVirtual) {
       event.conferenceData = {
         createRequest: {
@@ -78,7 +85,6 @@ async function createCalendarEvent(accessToken, summary, description, startDateT
       };
     }
     
-    // Insertar el evento; si es virtual, especificar conferenceDataVersion
     const response = await calendar.events.insert({
       calendarId: 'primary',
       resource: event,
@@ -88,12 +94,15 @@ async function createCalendarEvent(accessToken, summary, description, startDateT
     console.log("Evento creado, respuesta:", response.data);
     
     if (isVirtual) {
-      return response.data.conferenceData && response.data.conferenceData.entryPoints && response.data.conferenceData.entryPoints.length > 0
-        ? response.data.conferenceData.entryPoints[0].uri
-        : null;
+      const eventId = response.data.id;
+      const meetLink = response.data.conferenceData &&
+          response.data.conferenceData.entryPoints &&
+          response.data.conferenceData.entryPoints.length > 0
+          ? response.data.conferenceData.entryPoints[0].uri
+          : null;
+      return { eventId, meetLink };
     } else {
-      // Para citas presenciales, se puede devolver el ID del evento o un indicador
-      return response.data.id;
+      return { eventId: response.data.id, meetLink: null };
     }
   } catch (error) {
     console.error("Error al crear evento en Calendar:", error.message);
@@ -229,6 +238,23 @@ async function findOrCreateUser(name, email, picture, accessToken) {
       }
       return { user: { ...user, rol: "psicologo" }, role: "psicologo" };
     }
+  }
+}
+
+// Helper: Eliminar evento en Google Calendar
+async function deleteCalendarEvent(accessToken, eventId) {
+  try {
+    const oauth2Client = new OAuth2Client();
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: eventId,
+    });
+    return true;
+  } catch (error) {
+    console.error("Error al eliminar evento en Calendar:", error.message);
+    return false;
   }
 }
 
@@ -426,68 +452,53 @@ router.post("/asignar-horario", async (req, res) => {
 router.get("/horarios-disponibles", async (req, res) => {
   const { modalidad, sede, fecha } = req.query;
   try {
+    // Validar fecha
     if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
       return res.status(400).json({ error: "Fecha inválida. Debe estar en formato YYYY-MM-DD." });
     }
-    
     const fechaConsulta = new Date(`${fecha}T00:00:00-05:00`);
     if (isNaN(fechaConsulta.getTime())) {
       return res.status(400).json({ error: "Fecha inválida. Usa el formato YYYY-MM-DD." });
     }
-    // Verificar que la fecha no exceda los 15 días a partir de hoy
+    // Permitir consultas hasta 15 días a partir de hoy
     const hoy = new Date();
     const maxFecha = new Date();
     maxFecha.setDate(hoy.getDate() + 15);
     if (fechaConsulta > maxFecha) {
       return res.status(400).json({ error: "Solo se pueden ver horarios hasta 15 días a partir de hoy." });
     }
-    console.log("Fecha procesada:", fechaConsulta);
     
-    const diasSemana = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
-    const diaSemana = diasSemana[fechaConsulta.getDay()];
-    console.log("Día de la semana:", diaSemana);
-    
-    /* Si más adelante se requiere que en virtual se muestre los psicologos de todas las sedes
-    const filtroSede = (modalidad.toLowerCase() === "presencial" && sede && sede.trim() !== "")
-      ? { sede: sede.trim() }
-      : {}; */
+    // Filtrar psicólogos por sede (y modalidad si se requiere, aquí se filtra por sede)
     const filtroSede = sede && sede.trim() !== "" ? { sede: sede.trim() } : {};
-    console.log("Filtro de sede:", filtroSede);
-    
     const psicologos = await prisma.psicologo.findMany({
       where: {
-        ...filtroSede,
+        ...filtroSede
       },
-      include: {
-        horarios: true,
-        bloqueos: true,
-        citas: true, // Usamos el nombre correcto de la relación
-      },
-    });      
+      // Puedes seguir incluyendo otros campos si es necesario
+    });
     
     let slotsTotal = [];
     
     for (const psicologo of psicologos) {
-      const nombrePsicologo = "Psicól. " + psicologo.nombre;
-      const bloquesDelDia = psicologo.horarios.filter(
-        h => h.dia.trim().toLowerCase() === diaSemana.trim().toLowerCase()
-      );
-      if (bloquesDelDia.length === 0) {
-        console.log(`Psicólogo ${psicologo.nombre} no tiene horarios para ${diaSemana}`);
-        continue;
-      }
+      // Verifica que el psicólogo tenga token de Calendar
+      if (!psicologo.calendarAccessToken) continue;
       
-      let calendarEvents = [];
-      if (psicologo.calendarAccessToken) {
-        calendarEvents = await getCalendarEvents(psicologo.calendarAccessToken, fecha);
-      }
+      // Obtén los eventos de disponibilidad (bloques con "CITAS")
+      const availableEvents = await getAvailableEvents(psicologo.calendarAccessToken, fecha);
+      // Obtén los eventos ocupados (eventos que bloquean tiempo)
+      const busyEvents = await getBusyEvents(psicologo.calendarAccessToken, fecha);
       
-      for (const bloque of bloquesDelDia) {
-        const rangeStart = new Date(`${fecha}T${bloque.horaInicio}:00-05:00`);
-        const rangeEnd = new Date(`${fecha}T${bloque.horaFin}:00-05:00`);
-        const freeIntervals = computeFreeIntervals(rangeStart, rangeEnd, calendarEvents);
-        console.log(`Intervalos libres para ${psicologo.nombre} (${bloque.horaInicio} - ${bloque.horaFin}):`, freeIntervals);
+      console.log(`Disponibles para psicólogo ${psicologo.id}:`, availableEvents);
+      console.log(`Ocupados para psicólogo ${psicologo.id}:`, busyEvents);
+      
+      // Para cada bloque de disponibilidad, calcular los intervalos libres restando busyEvents
+      for (const availEvent of availableEvents) {
+        const rangeStart = new Date(availEvent.start.dateTime || availEvent.start.date);
+        const rangeEnd = new Date(availEvent.end.dateTime || availEvent.end.date);
+        const freeIntervals = computeFreeIntervals(rangeStart, rangeEnd, busyEvents);
+        console.log(`Intervalos libres para ${psicologo.nombre} en evento ${availEvent.id}:`, freeIntervals);
         
+        // Dividir cada intervalo en slots de 60 minutos
         for (const interval of freeIntervals) {
           const slots = subdivideInterval(interval, 60);
           const mappedSlots = slots.map(slot => {
@@ -498,10 +509,12 @@ router.get("/horarios-disponibles", async (req, res) => {
               hour12: false,
             }).trim();
             return {
-              id: `${psicologo.id}-${horaStr}`,
+              id: `${psicologo.id}-${availEvent.id}-${horaStr}`,
               psicologoId: psicologo.id,
-              nombrePsicologo: nombrePsicologo,
+              nombrePsicologo: "Psicól. " + psicologo.nombre,
               hora: horaStr,
+              start: slot.start,
+              end: slot.end,
             };
           });
           slotsTotal = slotsTotal.concat(mappedSlots);
@@ -509,13 +522,13 @@ router.get("/horarios-disponibles", async (req, res) => {
       }
     }
     
-    // Deduplicar slots (un solo slot por cada hora)
+    // Opcionalmente, deduplicar slots (en caso de solapamientos)
     const uniqueSlots = Array.from(new Map(slotsTotal.map(slot => [slot.id, slot])).values());
     console.log("Slots únicos:", uniqueSlots);
     
     res.json({ horarios: uniqueSlots });
   } catch (error) {
-    console.error("Error al obtener horarios:", error);
+    console.error("Error al obtener horarios disponibles:", error);
     res.status(500).json({ error: "Error interno del servidor" });
   }
 });
@@ -527,18 +540,20 @@ router.get("/horarios-disponibles", async (req, res) => {
 router.post("/reservar-cita", async (req, res) => {
   const { estudianteId, psicologoId, motivo, fecha, hora, modalidad } = req.body;
   try {
+    // Buscar estudiante y psicólogo en la BD
     const estudiante = await prisma.estudiante.findUnique({ where: { id: estudianteId } });
     const psicologo = await prisma.psicologo.findFirst({ where: { id: psicologoId } });
     if (!estudiante || !psicologo) {
       return res.status(404).json({ error: "Estudiante o psicólogo no encontrado." });
     }
 
+    // Validar la fecha
     const fechaDate = new Date(`${fecha}T00:00:00-05:00`);
     if (isNaN(fechaDate.getTime())) {
       return res.status(400).json({ error: "Fecha inválida. Debe estar en formato YYYY-MM-DD." });
     }
     
-    // Validar que la fecha no sea mayor a 15 días desde hoy
+    // Limitar la reserva a 15 días a partir de hoy
     const hoy = new Date();
     const maxFecha = new Date();
     maxFecha.setDate(hoy.getDate() + 15);
@@ -546,10 +561,12 @@ router.post("/reservar-cita", async (req, res) => {
       return res.status(400).json({ error: "Solo se puede reservar una cita hasta 15 días a partir de hoy." });
     }
     
+    // Validar el formato de hora (HH:mm)
     if (!/^\d{2}:\d{2}$/.test(hora)) {
       return res.status(400).json({ error: "Hora inválida. Debe estar en formato HH:mm." });
     }
     
+    // Validar que la reserva se haga con 48 horas de anticipación
     const now = new Date();
     const minReservaFull = new Date(now.getTime() + 48 * 60 * 60 * 1000);
     const minReservaDate = new Date(minReservaFull.getFullYear(), minReservaFull.getMonth(), minReservaFull.getDate());
@@ -559,6 +576,7 @@ router.post("/reservar-cita", async (req, res) => {
       return res.status(400).json({ error: `Para reservar una cita debe ser con 48 horas de anticipación, puede reservar su cita a partir del día ${diaDisponible}.` });
     }
     
+    // Verificar que el estudiante no tenga una cita pendiente
     const citaPendiente = await prisma.cita.findFirst({
       where: { estudianteId, estado: "pendiente" }
     });
@@ -566,6 +584,7 @@ router.post("/reservar-cita", async (req, res) => {
       return res.status(400).json({ error: "Ya tienes una cita pendiente. No puedes reservar otra hasta que la actual sea confirmada." });
     }
     
+    // Verificar que el horario no esté ya reservado para ese psicólogo
     const citaExistente = await prisma.cita.findFirst({
       where: { psicologoId, fecha: fechaDate, hora }
     });
@@ -573,8 +592,10 @@ router.post("/reservar-cita", async (req, res) => {
       return res.status(400).json({ error: "El horario ya está reservado." });
     }
     
+    // Determinar tipo de cita (virtual o presencial)
     const tipo = modalidad.toLowerCase() === "virtual" ? "virtual" : "presencial";
     
+    // Crear la cita en la BD
     let cita = await prisma.cita.create({
       data: {
         estudianteId,
@@ -586,8 +607,10 @@ router.post("/reservar-cita", async (req, res) => {
         estado: "pendiente",
       },
     });
-
+    
+    // Usar el token para crear el evento en Google Calendar
     let tokenToUse = psicologo.calendarAccessToken || estudiante.calendarAccessToken;
+    // Después de crear el evento en Calendar
     if (tokenToUse) {
       const startDateTimeLocal = `${fecha}T${hora}:00`;
       const [hourPart, minutePart] = hora.split(":");
@@ -595,6 +618,7 @@ router.post("/reservar-cita", async (req, res) => {
       const endDateTimeLocal = `${fecha}T${endHour}:${minutePart}:00`;
       
       const isVirtual = modalidad.toLowerCase() === "virtual";
+      
       const eventResult = await createCalendarEvent(
         tokenToUse,
         "Cita de Psicología",
@@ -608,16 +632,16 @@ router.post("/reservar-cita", async (req, res) => {
       if (isVirtual && eventResult) {
         cita = await prisma.cita.update({
           where: { id: cita.id },
-          data: { meetLink: eventResult },
+          data: { meetLink: eventResult.meetLink, calendarEventId: eventResult.eventId },
         });
       } else if (!isVirtual) {
         cita = await prisma.cita.update({
           where: { id: cita.id },
-          data: { meetLink: null },
+          data: { meetLink: null, calendarEventId: eventResult.eventId },
         });
       }
     }
-
+    
     res.json({ message: "Cita reservada correctamente", cita });
   } catch (error) {
     console.error("Error al reservar cita:", error);
@@ -673,6 +697,253 @@ router.put("/update-calendar-token", async (req, res) => {
     }
   } catch (error) {
     console.error("Error al actualizar el token de Calendar:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+/**
+ * Ruta: GET /detalle-cita
+ * Obtiene el detalle de la cita pendiente para un estudiante.
+ * Si la cita es presencial, también incluye la indicación basada en la sede del psicólogo.
+ */
+router.get("/detalle-cita", async (req, res) => {
+  const { estudianteId } = req.query;
+  if (!estudianteId) {
+    return res.status(400).json({ error: "El estudianteId es requerido" });
+  }
+  try {
+    // Buscar la cita pendiente del estudiante e incluir los datos del psicólogo
+    const cita = await prisma.cita.findFirst({
+      where: {
+        estudianteId: parseInt(estudianteId, 10),
+        estado: "pendiente"
+      },
+      include: {
+        psicologo: true,
+      }
+    });
+    if (!cita) {
+      return res.status(404).json({ error: "No hay cita pendiente" });
+    }
+
+    // Si la cita es presencial, se obtiene la indicación según la sede del psicólogo
+    let indicacion = null;
+    if (cita.tipo === "presencial" && cita.psicologo && cita.psicologo.sede) {
+      const resultado = await prisma.indicacion.findUnique({
+        where: { sede: cita.psicologo.sede }
+      });
+      if (resultado) {
+        indicacion = resultado.mensaje;
+      }
+    }
+    res.json({ cita, indicacion });
+  } catch (error) {
+    console.error("Error al obtener detalle de cita:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// Ruta para cancelar la cita
+// Ruta: PUT /cancelar-cita
+router.put("/cancelar-cita", async (req, res) => {
+  const { citaId } = req.body;
+  if (!citaId) {
+    return res.status(400).json({ error: "El citaId es requerido" });
+  }
+  try {
+    const updatedCita = await prisma.cita.update({
+      where: { id: parseInt(citaId, 10) },
+      data: { estado: "cancelada" },
+    });
+    // Si la cita tenía un evento en Calendar, eliminarlo usando calendarEventId
+    if (updatedCita.calendarEventId) {
+      const psicologo = await prisma.psicologo.findUnique({ where: { id: updatedCita.psicologoId } });
+      const tokenToUse = psicologo?.calendarAccessToken;
+      if (tokenToUse) {
+        await deleteCalendarEvent(tokenToUse, updatedCita.calendarEventId);
+      }
+    }
+    res.json({ message: "Cita cancelada", cita: updatedCita });
+  } catch (error) {
+    console.error("Error al cancelar la cita:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// Ruta: PUT /reprogramar-cita
+router.put("/reprogramar-cita", async (req, res) => {
+  const { citaId } = req.body;
+  if (!citaId) {
+    return res.status(400).json({ error: "El citaId es requerido" });
+  }
+  try {
+    const updatedCita = await prisma.cita.update({
+      where: { id: parseInt(citaId, 10) },
+      data: { estado: "reprogramada" },
+    });
+    // Eliminar el evento en Calendar de la cita original para liberar el horario
+    if (updatedCita.calendarEventId) {
+      const psicologo = await prisma.psicologo.findUnique({ where: { id: updatedCita.psicologoId } });
+      const tokenToUse = psicologo?.calendarAccessToken;
+      if (tokenToUse) {
+        await deleteCalendarEvent(tokenToUse, updatedCita.calendarEventId);
+      }
+    }
+    res.json({ message: "Cita marcada como reprogramada", cita: updatedCita });
+  } catch (error) {
+    console.error("Error al reprogramar la cita:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// POST /reprogramar-cita-crear
+router.post("/reprogramar-cita-crear", async (req, res) => {
+  const { citaPreviaId, estudianteId, psicologoId, motivo, fecha, hora, modalidad } = req.body;
+  try {
+    // Buscar estudiante y psicólogo en la BD
+    const estudiante = await prisma.estudiante.findUnique({ where: { id: estudianteId } });
+    const psicologo = await prisma.psicologo.findFirst({ where: { id: psicologoId } });
+    if (!estudiante || !psicologo) {
+      return res.status(404).json({ error: "Estudiante o psicólogo no encontrado." });
+    }
+
+    // Validar la fecha
+    const fechaDate = new Date(`${fecha}T00:00:00-05:00`);
+    if (isNaN(fechaDate.getTime())) {
+      return res.status(400).json({ error: "Fecha inválida. Debe estar en formato YYYY-MM-DD." });
+    }
+    
+    // Limitar la reserva a 15 días a partir de hoy
+    const hoy = new Date();
+    const maxFecha = new Date();
+    maxFecha.setDate(hoy.getDate() + 15);
+    if (fechaDate > maxFecha) {
+      return res.status(400).json({ error: "Solo se puede reservar una cita hasta 15 días a partir de hoy." });
+    }
+    
+    // Validar el formato de hora (HH:mm)
+    if (!/^\d{2}:\d{2}$/.test(hora)) {
+      return res.status(400).json({ error: "Hora inválida. Debe estar en formato HH:mm." });
+    }
+    
+    // Validar que la reserva se haga con 48 horas de anticipación
+    const now = new Date();
+    const minReservaFull = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    const minReservaDate = new Date(minReservaFull.getFullYear(), minReservaFull.getMonth(), minReservaFull.getDate());
+    if (fechaDate < minReservaDate) {
+      const dias = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
+      const diaDisponible = dias[minReservaDate.getDay()];
+      return res.status(400).json({ error: `Para reservar una cita debe ser con 48 horas de anticipación, puede reservar su cita a partir del día ${diaDisponible}.` });
+    }
+    
+    // Verificar que el horario no esté ya reservado para ese psicólogo
+    const citaExistente = await prisma.cita.findFirst({
+      where: { psicologoId, fecha: fechaDate, hora }
+    });
+    if (citaExistente) {
+      return res.status(400).json({ error: "El horario ya está reservado." });
+    }
+    
+    // Determinar tipo de cita (virtual o presencial)
+    const tipo = modalidad.toLowerCase() === "virtual" ? "virtual" : "presencial";
+    
+    // Crear la nueva cita en la BD, asignando citaPreviaId
+    let cita = await prisma.cita.create({
+      data: {
+        estudianteId,
+        psicologoId,
+        motivo,
+        fecha: fechaDate,
+        hora,
+        tipo,
+        estado: "pendiente",
+        citaPreviaId: citaPreviaId, // Vincula con la cita original
+      },
+    });
+    
+    // Usar el token para crear el evento en Google Calendar
+    let tokenToUse = psicologo.calendarAccessToken || estudiante.calendarAccessToken;
+    if (tokenToUse) {
+      const startDateTimeLocal = `${fecha}T${hora}:00`;
+      const [hourPart, minutePart] = hora.split(":");
+      const endHour = (parseInt(hourPart, 10) + 1).toString().padStart(2, "0");
+      const endDateTimeLocal = `${fecha}T${endHour}:${minutePart}:00`;
+      
+      const isVirtual = modalidad.toLowerCase() === "virtual";
+      
+      // Crear el evento en Calendar
+      const eventResult = await createCalendarEvent(
+        tokenToUse,
+        "Cita de Psicología",
+        motivo,
+        startDateTimeLocal,
+        endDateTimeLocal,
+        [psicologo.correo, estudiante.correo],
+        isVirtual
+      );
+      
+      // Actualizar la cita con el meetLink si es virtual
+      if (isVirtual && eventResult) {
+        cita = await prisma.cita.update({
+          where: { id: cita.id },
+          data: {
+            meetLink: eventResult.meetLink,
+            calendarEventId: eventResult.eventId,
+          },
+        });
+      } else if (!isVirtual) {
+        cita = await prisma.cita.update({
+          where: { id: cita.id },
+          data: {
+            meetLink: null,
+            calendarEventId: eventResult.eventId,
+          },
+        });
+      }      
+    }
+    
+    res.json({ message: "Cita reprogramada creada correctamente", cita });
+  } catch (error) {
+    console.error("Error al reprogramar cita:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// PUT /cancelar-reprogramacion
+router.put("/cancelar-reprogramacion", async (req, res) => {
+  const { citaId } = req.body;
+  if (!citaId) {
+    return res.status(400).json({ error: "El citaId es requerido" });
+  }
+  try {
+    const updatedCita = await prisma.cita.update({
+      where: { id: parseInt(citaId, 10) },
+      data: { estado: "pendiente" },
+    });
+    res.json({ message: "Reprogramación cancelada, estado revertido", cita: updatedCita });
+  } catch (error) {
+    console.error("Error al cancelar la reprogramación:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// En tu archivo de rutas (por ejemplo, auth.js)
+router.get("/historial-citas", async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) {
+    return res.status(400).json({ error: "El userId es requerido" });
+  }
+  try {
+    const citas = await prisma.cita.findMany({
+      where: { estudianteId: parseInt(userId, 10) },
+      orderBy: { fecha: 'desc' },
+      include: {
+        psicologo: true, // Incluir la información del psicólogo
+      },
+    });
+    res.json({ citas });
+  } catch (error) {
+    console.error("Error al obtener historial de citas:", error);
     res.status(500).json({ error: "Error interno del servidor" });
   }
 });

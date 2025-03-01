@@ -6,8 +6,25 @@ const { google } = require('googleapis');
 const { OAuth2Client } = require('google-auth-library');
 
 // =======================
-// HELPERS DE CALENDAR Y SLOTS (idénticos a auth.js)
+// HELPERS DE CALENDAR Y SLOTS
 // =======================
+
+// Función para formatear la hora en formato de 24 horas (sin "a.m." o "p.m.")
+// Si el resultado comienza con "24", lo reemplaza por "00"
+function formatTime(date) {
+  const options = {
+    timeZone: "America/Lima",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  };
+  let timeString = date.toLocaleTimeString("en-US", options);
+  const [hour, minute] = timeString.split(":");
+  if (hour === "24") {
+    timeString = "00:" + minute;
+  }
+  return timeString;
+}
 
 // Obtener eventos del Google Calendar usando OAuth2Client
 async function getCalendarEvents(accessToken, fecha) {
@@ -65,7 +82,8 @@ async function createCalendarEvent(accessToken, summary, description, startDateT
     });
     console.log("Evento creado, respuesta:", response.data);
     if (isVirtual) {
-      return response.data.conferenceData && response.data.conferenceData.entryPoints &&
+      return response.data.conferenceData &&
+             response.data.conferenceData.entryPoints &&
              response.data.conferenceData.entryPoints.length > 0
              ? response.data.conferenceData.entryPoints[0].uri
              : null;
@@ -242,54 +260,36 @@ router.get("/horarios-disponibles", async (req, res) => {
       return res.status(400).json({ error: "Fecha inválida. Usa el formato YYYY-MM-DD." });
     }
     
-    const diasSemana = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
-    const diaSemana = diasSemana[fechaConsulta.getDay()];
+    // Rango completo del día: desde las 00:00 hasta el inicio del día siguiente
+    const rangeStart = new Date(`${fecha}T00:00:00-05:00`);
+    const rangeEnd = new Date(`${fecha}T00:00:00-05:00`);
+    rangeEnd.setDate(rangeEnd.getDate() + 1);
     
-    // Obtener el psicólogo y sus horarios
+    let calendarEvents = [];
     const psicologo = await prisma.psicologo.findUnique({
       where: { id: parseInt(psicologoId, 10) },
-      include: { horarios: true }
     });
     if (!psicologo) {
       return res.status(404).json({ error: "Psicólogo no encontrado." });
     }
-    
-    // Filtrar los horarios asignados al día consultado
-    const bloquesDelDia = psicologo.horarios.filter(
-      h => h.dia.trim().toLowerCase() === diaSemana.trim().toLowerCase()
-    );
-    if (bloquesDelDia.length === 0) {
-      return res.json({ horarios: [] });
-    }
-    
-    let calendarEvents = [];
     if (psicologo.calendarAccessToken) {
       calendarEvents = await getCalendarEvents(psicologo.calendarAccessToken, fecha);
     }
     
     let slotsTotal = [];
-    for (const bloque of bloquesDelDia) {
-      const rangeStart = new Date(`${fecha}T${bloque.horaInicio}:00-05:00`);
-      const rangeEnd = new Date(`${fecha}T${bloque.horaFin}:00-05:00`);
-      const freeIntervals = computeFreeIntervals(rangeStart, rangeEnd, calendarEvents);
-      for (const interval of freeIntervals) {
-        const slots = subdivideInterval(interval, 60);
-        const mappedSlots = slots.map(slot => {
-          const horaStr = slot.start.toLocaleTimeString("es-PE", {
-            timeZone: "America/Lima",
-            hour: "2-digit",
-            minute: "2-digit",
-            hour12: false,
-          }).trim();
-          return {
-            id: `${psicologo.id}-${horaStr}`,
-            psicologoId: psicologo.id,
-            nombrePsicologo: "Psicól. " + psicologo.nombre,
-            hora: horaStr,
-          };
-        });
-        slotsTotal = slotsTotal.concat(mappedSlots);
-      }
+    const freeIntervals = computeFreeIntervals(rangeStart, rangeEnd, calendarEvents);
+    for (const interval of freeIntervals) {
+      const slots = subdivideInterval(interval, 60);
+      const mappedSlots = slots.map(slot => {
+        const formattedTime = formatTime(slot.start);
+        return {
+          id: `${psicologo.id}-${formattedTime}`,
+          psicologoId: psicologo.id,
+          nombrePsicologo: "Psicól. " + psicologo.nombre,
+          hora: formattedTime,
+        };
+      });
+      slotsTotal = slotsTotal.concat(mappedSlots);
     }
     
     const uniqueSlots = Array.from(new Map(slotsTotal.map(slot => [slot.id, slot])).values());
@@ -381,7 +381,7 @@ router.post("/reservar-cita", async (req, res) => {
       const endHour = (parseInt(hourPart, 10) + 1).toString().padStart(2, "0");
       const endDateTimeLocal = `${fecha}T${endHour}:${minutePart}:00`;
       const isVirtual = modalidad.toLowerCase() === "virtual";
-      // Aquí se agregan los correos tanto del psicólogo como del estudiante
+      // Se agregan los correos tanto del psicólogo como del estudiante
       const eventResult = await createCalendarEvent(
         tokenToUse,
         "Cita de Psicología",

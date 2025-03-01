@@ -116,7 +116,8 @@ model Cita {
   hora             String      @db.VarChar(5)
   tipo             TipoCita
   estado           Estado
-  meetLink         String?     
+  meetLink         String? 
+  calendarEventId  String?    
   citaPreviaId     Int?
   citaPrevia       Cita?       @relation("CitasSeguimiento", fields: [citaPreviaId], references: [id])
   citasSeguimiento Cita[]      @relation("CitasSeguimiento")
@@ -213,6 +214,14 @@ model AtencionCita {
   observaciones         String? @db.Text
   creadaEn              DateTime                  @default(now())
   updatedAt             DateTime                  @updatedAt
+}
+
+// Tabla para las indicaciones
+model Indicacion {
+  id       Int      @id @default(autoincrement())
+  sede     String   @unique
+  mensaje  String
+  creadoEn DateTime @default(now())
 }
 
 // ENUMS

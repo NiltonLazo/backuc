@@ -95,23 +95,13 @@ CREATE TABLE `Cita` (
     `fecha` DATE NOT NULL,
     `hora` VARCHAR(5) NOT NULL,
     `tipo` ENUM('virtual', 'presencial') NOT NULL,
-    `estado` ENUM('pendiente', 'atendida', 'cancelada', 'reprogramada') NOT NULL,
+    `estado` ENUM('pendiente', 'atendida', 'no_asistio', 'cancelada', 'reprogramada') NOT NULL,
     `meetLink` VARCHAR(191) NULL,
+    `calendarEventId` VARCHAR(191) NULL,
     `citaPreviaId` INTEGER NULL,
     `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `Cita_psicologo_id_fecha_hora_key`(`psicologo_id`, `fecha`, `hora`),
-    PRIMARY KEY (`id`)
-) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
--- CreateTable
-CREATE TABLE `Recomendacion` (
-    `id` INTEGER NOT NULL AUTO_INCREMENT,
-    `citaId` INTEGER NOT NULL,
-    `psicologoId` INTEGER NOT NULL,
-    `contenido` VARCHAR(191) NOT NULL,
-    `creadaEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -162,11 +152,52 @@ CREATE TABLE `HistoriaClinica` (
     `id` INTEGER NOT NULL AUTO_INCREMENT,
     `citaId` INTEGER NOT NULL,
     `diagnostico` VARCHAR(191) NOT NULL,
-    `recomendaciones` VARCHAR(191) NULL,
-    `observaciones` VARCHAR(191) NULL,
+    `recomendaciones` TEXT NULL,
+    `observaciones` TEXT NULL,
     `creadaEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `HistoriaClinica_citaId_key`(`citaId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `AtencionCita` (
+    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `citaId` INTEGER NOT NULL,
+    `areaDerivacion` ENUM('tutoria', 'mentoria', 'topico', 'personal', 'CAS', 'defensoria_universitaria', 'vinculacion_internacional', 'docente', 'protocolo_de_salud_mental', 'servicio_social') NULL,
+    `diagnosticoPresuntivo` ENUM('familiar', 'academico', 'agresivo_pasivo', 'ansiedad', 'antisocial', 'autoestima', 'bipolar', 'borderline', 'compulsivo_autocontrol', 'dependencia_videojuegos_internet', 'dependencia_alcohol_drogas', 'relacion_afectiva', 'depresion', 'desorden_alimenticio', 'duelo_fallecimiento', 'distimia', 'esquizoide', 'esquizotipico', 'estres', 'histrionico', 'ludopatia', 'narcisista', 'orientacion_vocacional', 'paranoide', 'servicio_social', 'somatoformo', 'trabajo_o_laboral') NULL,
+    `medioContacto` ENUM('boca_a_boca', 'protocolo_de_salud_mental', 'entrevistas_de_vinculacion', 'correo_electronico', 'talleres_preventivos', 'citas_automatizadas', 'onboarding', 'app_movil') NULL,
+    `recomendaciones` TEXT NULL,
+    `observaciones` TEXT NULL,
+    `creadaEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+    `updatedAt` DATETIME(3) NOT NULL,
+
+    UNIQUE INDEX `AtencionCita_citaId_key`(`citaId`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Indicacion` (
+    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `sede` VARCHAR(191) NOT NULL,
+    `mensaje` VARCHAR(191) NOT NULL,
+    `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `Indicacion_sede_key`(`sede`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `Encuesta` (
+    `id` INTEGER NOT NULL AUTO_INCREMENT,
+    `citaId` INTEGER NOT NULL,
+    `pregunta1` INTEGER NOT NULL,
+    `pregunta2` INTEGER NOT NULL,
+    `pregunta3` INTEGER NOT NULL,
+    `comentarios` VARCHAR(191) NULL,
+    `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+
+    UNIQUE INDEX `Encuesta_citaId_key`(`citaId`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -186,12 +217,6 @@ ALTER TABLE `Cita` ADD CONSTRAINT `Cita_psicologo_id_fkey` FOREIGN KEY (`psicolo
 ALTER TABLE `Cita` ADD CONSTRAINT `Cita_citaPreviaId_fkey` FOREIGN KEY (`citaPreviaId`) REFERENCES `Cita`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE `Recomendacion` ADD CONSTRAINT `Recomendacion_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE `Recomendacion` ADD CONSTRAINT `Recomendacion_psicologoId_fkey` FOREIGN KEY (`psicologoId`) REFERENCES `Psicologo`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE `Reprogramacion` ADD CONSTRAINT `Reprogramacion_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -208,3 +233,9 @@ ALTER TABLE `Notificacion` ADD CONSTRAINT `Notificacion_citaId_fkey` FOREIGN KEY
 
 -- AddForeignKey
 ALTER TABLE `HistoriaClinica` ADD CONSTRAINT `HistoriaClinica_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `AtencionCita` ADD CONSTRAINT `AtencionCita_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `Encuesta` ADD CONSTRAINT `Encuesta_citaId_fkey` FOREIGN KEY (`citaId`) REFERENCES `Cita`(`id`) ON DELETE RESTRICT ON UPDATE CASCADE;

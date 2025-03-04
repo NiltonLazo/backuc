@@ -1,2 +1,0 @@
--- AlterTable
-ALTER TABLE `AtencionCita` MODIFY `diagnosticoPresuntivo` ENUM('familiar', 'academico', 'agresivo_pasivo', 'ansiedad', 'antisocial', 'autoestima', 'bipolar', 'borderline', 'compulsivo_autocontrol', 'dependencia_videojuegos_internet', 'dependencia_alcohol_drogas', 'relacion_afectiva', 'depresion', 'desorden_alimenticio', 'duelo_fallecimiento', 'distimia', 'esquizoide', 'esquizotipico', 'estres', 'histrionico', 'ludopatia', 'narcisista', 'orientacion_vocacional', 'paranoide', 'servicio_social', 'somatoformo', 'trabajo_o_laboral') NULL;

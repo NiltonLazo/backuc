@@ -16,11 +16,11 @@ datasource db {
 
 // MODELO PARA GESTIONAR CORREOS AUTORIZADOS PARA ADMINISTRADORES Y PSICÓLOGOS
 model AllowedEmail {
-  id        Int         @id @default(autoincrement())
-  email     String      @unique
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
   role      RoleAllowed
-  active    Boolean     @default(true)
-  creadoEn  DateTime    @default(now())
+  active    Boolean  @default(true)
+  creadoEn  DateTime @default(now())
 }
 
 enum RoleAllowed {
@@ -67,7 +67,7 @@ model Psicologo {
   horarios             Horario[]
   bloqueos             BloqueoHorario[]
   citas                Cita[]    @relation("CitasPsicologo")
-  recomendaciones      Recomendacion[]
+  // Se eliminó la relación recomendaciones
   notificaciones       Notificacion[]
 }
 
@@ -131,19 +131,12 @@ model Cita {
 
   @@unique([psicologoId, fecha, hora])
 
-  recomendaciones  Recomendacion[]
+  // Se eliminó la relación recomendaciones
   reprogramaciones Reprogramacion[]
   notificaciones   Notificacion[]
-}
 
-model Recomendacion {
-  id          Int        @id @default(autoincrement())
-  citaId      Int
-  cita        Cita       @relation(fields: [citaId], references: [id])
-  psicologoId Int
-  psicologo   Psicologo  @relation(fields: [psicologoId], references: [id])
-  contenido   String
-  creadaEn    DateTime   @default(now())
+  // NUEVO: Relación inversa para la encuesta de satisfacción
+  encuesta         Encuesta?
 }
 
 model Reprogramacion {
@@ -195,8 +188,8 @@ model HistoriaClinica {
   citaId          Int      @unique
   cita            Cita     @relation(fields: [citaId], references: [id])
   diagnostico     String
-  recomendaciones String? @db.Text
-  observaciones   String? @db.Text
+  recomendaciones String?  @db.Text
+  observaciones   String?  @db.Text
   creadaEn        DateTime @default(now())
 }
 
@@ -209,9 +202,9 @@ model AtencionCita {
   areaDerivacion        AreaDerivacionEnum?
   diagnosticoPresuntivo DiagnosticoPresuntivoEnum?
   medioContacto         MedioContactoEnum?
-  recomendaciones         String? @db.Text
+  recomendaciones       String?                   @db.Text
   // Campo para cuando la cita no fue asistida:
-  observaciones         String? @db.Text
+  observaciones         String?                   @db.Text
   creadaEn              DateTime                  @default(now())
   updatedAt             DateTime                  @updatedAt
 }
@@ -222,6 +215,18 @@ model Indicacion {
   sede     String   @unique
   mensaje  String
   creadoEn DateTime @default(now())
+}
+
+// Tabla de encuestas
+model Encuesta {
+  id          Int      @id @default(autoincrement())
+  citaId      Int      @unique
+  cita        Cita     @relation(fields: [citaId], references: [id])
+  pregunta1   Int
+  pregunta2   Int
+  pregunta3   Int
+  comentarios String?
+  creadoEn    DateTime @default(now())
 }
 
 // ENUMS

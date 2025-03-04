@@ -934,16 +934,109 @@ router.get("/historial-citas", async (req, res) => {
     return res.status(400).json({ error: "El userId es requerido" });
   }
   try {
-    const citas = await prisma.cita.findMany({
+    let citas = await prisma.cita.findMany({
       where: { estudianteId: parseInt(userId, 10) },
       orderBy: { fecha: 'desc' },
       include: {
-        psicologo: true, // Incluir la información del psicólogo
+        // Incluimos la información del psicólogo.
+        psicologo: true,
       },
     });
+
+    // Para cada cita presencial, obtener la indicación correspondiente.
+    citas = await Promise.all(citas.map(async (cita) => {
+      if (cita.tipo === "presencial" && cita.psicologo && cita.psicologo.sede) {
+        const indicacionObj = await prisma.indicacion.findUnique({
+          where: { sede: cita.psicologo.sede }
+        });
+        cita.indicacion = indicacionObj ? indicacionObj.mensaje : null;
+      }
+      return cita;
+    }));
+
     res.json({ citas });
   } catch (error) {
     console.error("Error al obtener historial de citas:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+router.get("/recomendaciones-citas", async (req, res) => {
+  const { userId } = req.query;
+  if (!userId) {
+    return res.status(400).json({ error: "El userId es requerido" });
+  }
+  try {
+    const citas = await prisma.cita.findMany({
+      where: {
+        estudianteId: parseInt(userId, 10),
+        atencionCita: { isNot: null },
+      },
+      orderBy: { fecha: 'desc' },
+      include: {
+        psicologo: true,
+        atencionCita: true,
+      },
+    });
+
+    // Mapeamos para devolver solo los campos necesarios y dejamos las recomendaciones tal cual
+    const result = citas.map(cita => ({
+      fecha: cita.fecha,
+      psicologo: cita.psicologo,
+      recomendacion: cita.atencionCita?.recomendaciones || ""
+    }));
+
+    res.json({ citas: result });
+  } catch (error) {
+    console.error("Error al obtener recomendaciones de citas:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// Nueva ruta: GET /cita-evaluacion
+router.get("/cita-evaluacion", async (req, res) => {
+  const { estudianteId } = req.query;
+  if (!estudianteId) {
+    return res.status(400).json({ error: "El estudianteId es requerido" });
+  }
+  try {
+    // Buscar la cita que ha sido atendida y que aún no tiene encuesta asociada.
+    const cita = await prisma.cita.findFirst({
+      where: {
+        estudianteId: parseInt(estudianteId, 10),
+        estado: "atendida",
+        // La relación inversa 'encuesta' se definió en el esquema.
+        encuesta: null,
+      },
+      orderBy: { fecha: 'desc' } // Por ejemplo, se toma la más reciente
+    });
+    res.json({ cita });
+  } catch (error) {
+    console.error("Error al obtener cita para evaluación:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// Nueva ruta: POST /guardar-encuesta
+router.post("/guardar-encuesta", async (req, res) => {
+  const { citaId, pregunta1, pregunta2, pregunta3, comentarios } = req.body;
+  if (!citaId || !pregunta1 || !pregunta2 || !pregunta3) {
+    return res.status(400).json({ error: "Todos los campos obligatorios deben ser proporcionados" });
+  }
+  try {
+    // Crea la encuesta asociada a la cita
+    const encuesta = await prisma.encuesta.create({
+      data: {
+        cita: { connect: { id: citaId } },
+        pregunta1,
+        pregunta2,
+        pregunta3,
+        comentarios,
+      },
+    });
+    res.json({ message: "Encuesta guardada correctamente", encuesta });
+  } catch (error) {
+    console.error("Error al guardar la encuesta:", error);
     res.status(500).json({ error: "Error interno del servidor" });
   }
 });

@@ -225,7 +225,7 @@ model Encuesta {
   pregunta1   Int
   pregunta2   Int
   pregunta3   Int
-  comentarios String?
+  comentarios String?  @db.Text
   creadoEn    DateTime @default(now())
 }
 

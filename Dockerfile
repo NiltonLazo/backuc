@@ -17,5 +17,5 @@ COPY . .
 # Expone el puerto 3000
 EXPOSE 3000
 
-# Comando para iniciar el servidor en modo desarrollo
-CMD ["sh", "-c", "npx prisma migrate deploy && npm run dev"]
+# Comando para ejecutar migraciones forzadas y luego iniciar el servidor
+CMD ["sh", "-c", "npx prisma migrate reset --force && npx prisma migrate deploy && npm run dev"]

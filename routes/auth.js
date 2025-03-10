@@ -304,7 +304,7 @@ router.post("/google-signin", async (req, res) => {
   let token, accessToken, refreshToken;
 
   // Definir redirect_uri según el entorno
-  const redirectUri = req.body.redirect_uri || process.env.REDIRECT_URI;;
+  const redirectUri = req.body.redirect_uri || process.env.REDIRECT_URI;
 
   // Flujo con código de autorización (web)
   if (req.body.code) {
@@ -312,14 +312,17 @@ router.post("/google-signin", async (req, res) => {
     try {
       const { tokens } = await client.getToken({
         code,
-        redirect_uri: redirectUri, // Se usa el redirect_uri enviado por el frontend o el de entorno
+        client_id: process.env.GOOGLE_CLIENT_ID,  // 🔥 Asegurar que se envía
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,  // 🔥 Asegurar que se envía
+        redirect_uri: redirectUri, 
       });
+
       token = tokens.id_token;
       accessToken = tokens.access_token;
       refreshToken = tokens.refresh_token;
-      console.log("Tokens obtenidos del intercambio:", tokens);
+      console.log("✅ Tokens obtenidos del intercambio:", tokens);
     } catch (error) {
-      console.error("Error al intercambiar el código de autorización:", error);
+      console.error("❌ Error al intercambiar el código de autorización:", error.response?.data || error.message);
       return res.status(401).json({ error: "Error al intercambiar el código de autorización" });
     }
   } else {
@@ -341,7 +344,7 @@ router.post("/google-signin", async (req, res) => {
       return res.status(403).json({ error: "Debe iniciar sesión con su correo institucional" });
     }
 
-    // Usar la función auxiliar para buscar o crear el usuario según su rol.
+    // Buscar o crear usuario en la base de datos
     const { user, role } = await findOrCreateUser(name, trimmedEmail, picture, accessToken, refreshToken);
 
     const isFirstLogin =
@@ -357,7 +360,7 @@ router.post("/google-signin", async (req, res) => {
 
     res.json({ token: jwtToken, usuario: { ...user, rol: role, refreshToken }, isFirstLogin });
   } catch (error) {
-    console.error("Error en autenticación con Google:", error);
+    console.error("❌ Error en autenticación con Google:", error);
     return res.status(401).json({ error: "Token inválido" });
   }
 });

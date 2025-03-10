@@ -18,4 +18,4 @@ COPY . .
 EXPOSE 3000
 
 # Comando para iniciar el servidor en modo desarrollo
-CMD ["npm", "run", "dev"]
+CMD ["sh", "-c", "npx prisma migrate deploy && npm run dev"]

@@ -160,7 +160,7 @@ function subdivideInterval(interval, durationMinutes = 60) {
  * - Si no, se verifica que el correo esté en AllowedEmail y, según el campo 'role',
  *   se asume que es psicólogo o administrador.
  */
-async function findOrCreateUser(name, email, picture, accessToken) {
+async function findOrCreateUser(name, email, picture, accessToken, refreshToken) {
   const trimmedEmail = email.trim();
 
   if (/^\d/.test(trimmedEmail)) {
@@ -188,7 +188,6 @@ async function findOrCreateUser(name, email, picture, accessToken) {
         },
       });
     }
-    // Agregamos la propiedad rol al objeto (no está en la tabla)
     return { user: { ...user, rol: "estudiante" }, role: "estudiante" };
   } else {
     // Para psicólogos o administradores: se consulta la tabla AllowedEmail
@@ -222,7 +221,10 @@ async function findOrCreateUser(name, email, picture, accessToken) {
       if (user) {
         user = await prisma.psicologo.update({
           where: { correo: trimmedEmail },
-          data: { calendarAccessToken: accessToken },
+          data: {
+            calendarAccessToken: accessToken,
+            calendarRefreshToken: refreshToken, // Guarda el refresh token
+          },
         });
       } else {
         user = await prisma.psicologo.create({
@@ -233,6 +235,7 @@ async function findOrCreateUser(name, email, picture, accessToken) {
             telefono: null,
             sede: null,
             calendarAccessToken: accessToken,
+            calendarRefreshToken: refreshToken, // Guarda el refresh token
           },
         });
       }
@@ -298,7 +301,7 @@ router.get("/get-user", async (req, res) => {
  * - Para correos que comienzan con letras se consulta AllowedEmail para verificar autorización.
  */
 router.post("/google-signin", async (req, res) => {
-  let token, accessToken;
+  let token, accessToken, refreshToken;
 
   // Flujo con código de autorización (web)
   if (req.body.code) {
@@ -310,6 +313,7 @@ router.post("/google-signin", async (req, res) => {
       });
       token = tokens.id_token;
       accessToken = tokens.access_token;
+      refreshToken = tokens.refresh_token;  // Aquí se extrae el refresh token
       console.log("Tokens obtenidos del intercambio:", tokens);
     } catch (error) {
       console.error("Error al intercambiar el código de autorización:", error);
@@ -319,6 +323,7 @@ router.post("/google-signin", async (req, res) => {
     // Flujo directo (por ejemplo, desde Flutter)
     token = req.body.token;
     accessToken = req.body.accessToken;
+    // En este flujo, es posible que no se envíe refreshToken
   }
 
   try {
@@ -334,8 +339,9 @@ router.post("/google-signin", async (req, res) => {
       return res.status(403).json({ error: "Debe iniciar sesión con su correo institucional" });
     }
 
-    // Usar la función auxiliar para buscar o crear el usuario según su rol
-    const { user, role } = await findOrCreateUser(name, trimmedEmail, picture, accessToken);
+    // Usar la función auxiliar para buscar o crear el usuario según su rol.
+    // Se le pasa también el refreshToken, que podrá ser almacenado para usos posteriores.
+    const { user, role } = await findOrCreateUser(name, trimmedEmail, picture, accessToken, refreshToken);
 
     // Definir isFirstLogin según el rol:
     // - Estudiante: si faltan teléfono, sede, ciclo, carrera o modalidad.
@@ -350,12 +356,14 @@ router.post("/google-signin", async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "7d" }
     );
-    res.json({ token: jwtToken, usuario: { ...user, rol: role }, isFirstLogin });
+
+    // Se incluye refreshToken en la respuesta (si existe)
+    res.json({ token: jwtToken, usuario: { ...user, rol: role, refreshToken }, isFirstLogin });
   } catch (error) {
     console.error("Error en autenticación con Google:", error);
     return res.status(401).json({ error: "Token inválido" });
   }
-});
+})
 
 /**
  * Ruta: PUT /update-profile
@@ -567,13 +575,12 @@ router.post("/reservar-cita", async (req, res) => {
     }
     
     // Validar que la reserva se haga con 48 horas de anticipación
-    const now = new Date();
-    const minReservaFull = new Date(now.getTime() + 48 * 60 * 60 * 1000);
-    const minReservaDate = new Date(minReservaFull.getFullYear(), minReservaFull.getMonth(), minReservaFull.getDate());
+    const hoyLima = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Lima" }));
+    const minReservaDate = new Date(hoyLima.getFullYear(), hoyLima.getMonth(), hoyLima.getDate() + 2);
     if (fechaDate < minReservaDate) {
       const dias = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
       const diaDisponible = dias[minReservaDate.getDay()];
-      return res.status(400).json({ error: `Para reservar una cita debe ser con 48 horas de anticipación, puede reservar su cita a partir del día ${diaDisponible}.` });
+      return res.status(400).json({ error: `Para reservar una cita debe ser con al menos dos días de anticipación, puede reservar su cita a partir del día ${diaDisponible}.` });
     }
     
     // Verificar que el estudiante no tenga una cita pendiente
@@ -698,6 +705,26 @@ router.put("/update-calendar-token", async (req, res) => {
   } catch (error) {
     console.error("Error al actualizar el token de Calendar:", error);
     res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// Para el sistema web
+router.post("/refresh-tokens", async (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) {
+    return res.status(400).json({ error: "No refresh token provided" });
+  }
+  try {
+    const oauth2Client = new OAuth2Client(
+      process.env.GOOGLE_CLIENT_ID, 
+      process.env.GOOGLE_CLIENT_SECRET
+    );
+    oauth2Client.setCredentials({ refresh_token: refreshToken });
+    const { credentials } = await oauth2Client.refreshAccessToken();
+    res.json(credentials);
+  } catch (error) {
+    console.error("Error refreshing tokens:", error.message);
+    res.status(500).json({ error: "Error refreshing tokens" });
   }
 });
 
@@ -827,13 +854,12 @@ router.post("/reprogramar-cita-crear", async (req, res) => {
     }
     
     // Validar que la reserva se haga con 48 horas de anticipación
-    const now = new Date();
-    const minReservaFull = new Date(now.getTime() + 48 * 60 * 60 * 1000);
-    const minReservaDate = new Date(minReservaFull.getFullYear(), minReservaFull.getMonth(), minReservaFull.getDate());
+    const hoyLima = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Lima" }));
+    const minReservaDate = new Date(hoyLima.getFullYear(), hoyLima.getMonth(), hoyLima.getDate() + 2);
     if (fechaDate < minReservaDate) {
       const dias = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
       const diaDisponible = dias[minReservaDate.getDay()];
-      return res.status(400).json({ error: `Para reservar una cita debe ser con 48 horas de anticipación, puede reservar su cita a partir del día ${diaDisponible}.` });
+      return res.status(400).json({ error: `Para reservar una cita debe ser con al menos dos días de anticipación, puede reservar su cita a partir del día ${diaDisponible}.` });
     }
     
     // Verificar que el horario no esté ya reservado para ese psicólogo

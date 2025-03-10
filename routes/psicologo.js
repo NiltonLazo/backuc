@@ -438,5 +438,48 @@ router.get("/cita-pendiente", async (req, res) => {
  * (Se mantienen sin cambios)
  */
 
+/**
+ * GET /psicologo/reporte
+ * Devuelve todos los registros de citas junto con la información del estudiante y atención.
+ */
+router.get('/reporte', async (req, res) => {
+  try {
+    const citas = await prisma.cita.findMany({
+      include: {
+        estudiante: true,
+        atencionCita: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+    res.json({ data: citas });
+  } catch (error) {
+    console.error("Error al obtener el reporte:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+/**
+ * GET /cita/followup/:id
+ * Retorna la cita de seguimiento (si existe) cuyo campo citaPreviaId coincida con el id dado.
+ */
+router.get('/cita/followup/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const followUpCita = await prisma.cita.findFirst({
+      where: {
+        citaPreviaId: parseInt(id, 10)
+      },
+      include: { atencionCita: true } // incluir si se requiere información adicional
+    });
+    if (!followUpCita) {
+      return res.json({ cita: null });
+    }
+    res.json({ cita: followUpCita });
+  } catch (error) {
+    console.error("Error al obtener la cita de seguimiento:", error);
+    res.status(500).json({ error: "Error en el servidor" });
+  }
+});
+
 module.exports = router;
 

@@ -46,4 +46,5 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`Servidor escuchando en http://10.0.2.2:${port}`);
     // console.log(`Servidor escuchando en http://localhost:${port}`); // Para dispositivos físicos
+    require('./cronJobs');
 });

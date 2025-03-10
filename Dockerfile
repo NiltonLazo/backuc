@@ -4,10 +4,11 @@ FROM node:18
 # Establece el directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# Copia los archivos de dependencias
+# Copia los archivos de dependencias y la carpeta prisma
 COPY package*.json ./
+COPY prisma ./prisma
 
-# Instala las dependencias
+# Instala las dependencias (esto ejecuta el postinstall y ya encontrará prisma/schema.prisma)
 RUN npm install
 
 # Copia el resto del código al contenedor

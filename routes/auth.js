@@ -306,6 +306,8 @@ router.post("/google-signin", async (req, res) => {
   // Definir redirect_uri según el entorno
   const redirectUri = req.body.redirect_uri || process.env.REDIRECT_URI;
 
+  console.log("🔍 Enviando solicitud a Google con redirect_uri:", redirectUri);
+
   // Flujo con código de autorización (web)
   if (req.body.code) {
     const { code } = req.body;

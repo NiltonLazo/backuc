@@ -7,7 +7,7 @@
     "start": "node index.js",
     "dev": "nodemon index.js",
     "build": "npx prisma generate",
-    "postinstall": "mkdir -p prisma && npx prisma generate"
+    "postinstall": "npx prisma generate --schema=./prisma/schema.prisma"
   },
   "keywords": [],
   "author": "",

@@ -11,7 +11,7 @@ generator client {
 
 datasource db {
   provider = "mysql"
-  url      = env("DATABASE_URL_DOCKER")
+  url      = env("DATABASE_URL")
 }
 
 // MODELO PARA GESTIONAR CORREOS AUTORIZADOS PARA ADMINISTRADORES Y PSICÓLOGOS

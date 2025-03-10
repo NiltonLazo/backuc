@@ -303,17 +303,20 @@ router.get("/get-user", async (req, res) => {
 router.post("/google-signin", async (req, res) => {
   let token, accessToken, refreshToken;
 
+  // Definir redirect_uri según el entorno
+  const redirectUri = req.body.redirect_uri || process.env.REDIRECT_URI || "http://localhost:3001";
+
   // Flujo con código de autorización (web)
   if (req.body.code) {
     const { code } = req.body;
     try {
       const { tokens } = await client.getToken({
         code,
-        redirect_uri: process.env.REDIRECT_URI || "http://localhost:3001",
+        redirect_uri: redirectUri, // Se usa el redirect_uri enviado por el frontend o el de entorno
       });
       token = tokens.id_token;
       accessToken = tokens.access_token;
-      refreshToken = tokens.refresh_token;  // Aquí se extrae el refresh token
+      refreshToken = tokens.refresh_token;
       console.log("Tokens obtenidos del intercambio:", tokens);
     } catch (error) {
       console.error("Error al intercambiar el código de autorización:", error);
@@ -323,7 +326,6 @@ router.post("/google-signin", async (req, res) => {
     // Flujo directo (por ejemplo, desde Flutter)
     token = req.body.token;
     accessToken = req.body.accessToken;
-    // En este flujo, es posible que no se envíe refreshToken
   }
 
   try {
@@ -340,12 +342,8 @@ router.post("/google-signin", async (req, res) => {
     }
 
     // Usar la función auxiliar para buscar o crear el usuario según su rol.
-    // Se le pasa también el refreshToken, que podrá ser almacenado para usos posteriores.
     const { user, role } = await findOrCreateUser(name, trimmedEmail, picture, accessToken, refreshToken);
 
-    // Definir isFirstLogin según el rol:
-    // - Estudiante: si faltan teléfono, sede, ciclo, carrera o modalidad.
-    // - Psicólogo o Administrador: si faltan teléfono o sede.
     const isFirstLogin =
       role === "estudiante"
         ? (!user.telefono || !user.sede || !user.ciclo || !user.carrera || !user.modalidad)
@@ -357,13 +355,12 @@ router.post("/google-signin", async (req, res) => {
       { expiresIn: "7d" }
     );
 
-    // Se incluye refreshToken en la respuesta (si existe)
     res.json({ token: jwtToken, usuario: { ...user, rol: role, refreshToken }, isFirstLogin });
   } catch (error) {
     console.error("Error en autenticación con Google:", error);
     return res.status(401).json({ error: "Token inválido" });
   }
-})
+});
 
 /**
  * Ruta: PUT /update-profile

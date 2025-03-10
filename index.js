@@ -9,27 +9,18 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Configurar dinámicamente la conexión a la base de datos
-const DATABASE_URL =
-    process.env.ENVIRONMENT === 'local'
-        ? process.env.DATABASE_URL_LOCAL
-        : process.env.DATABASE_URL_DOCKER;
+// 🚀 Corregido: Usar DATABASE_URL directamente
+const DATABASE_URL = process.env.DATABASE_URL;
 
 console.log(`Conectando a la base de datos en: ${DATABASE_URL}`);
 
-// Verifica si DATABASE_URL está undefined
+// 🚨 Si DATABASE_URL sigue sin aparecer en logs, Railway no la está pasando correctamente
 if (!DATABASE_URL) {
-    throw new Error("DATABASE_URL no está definido. Verifica tu archivo .env y la lógica de ENVIRONMENT.");
+    throw new Error("DATABASE_URL no está definido. Verifica Railway.");
 }
 
-// Inicializar PrismaClient con la URL dinámica
-const prisma = new PrismaClient({
-    datasources: {
-        db: {
-            url: DATABASE_URL, // URL dinámica
-        },
-    },
-});
+// 🚀 Corregido: Prisma ahora usa DATABASE_URL automáticamente
+const prisma = new PrismaClient();
 
 // Rutas
 app.use("/auth", authRoutes);
@@ -45,6 +36,5 @@ app.get('/', async (req, res) => {
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`Servidor escuchando en http://10.0.2.2:${port}`);
-    // console.log(`Servidor escuchando en http://localhost:${port}`); // Para dispositivos físicos
     require('./cronJobs');
 });

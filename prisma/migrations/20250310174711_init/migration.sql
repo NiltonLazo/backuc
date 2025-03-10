@@ -194,7 +194,7 @@ CREATE TABLE `Encuesta` (
     `pregunta1` INTEGER NOT NULL,
     `pregunta2` INTEGER NOT NULL,
     `pregunta3` INTEGER NOT NULL,
-    `comentarios` VARCHAR(191) NULL,
+    `comentarios` TEXT NULL,
     `creadoEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
 
     UNIQUE INDEX `Encuesta_citaId_key`(`citaId`),

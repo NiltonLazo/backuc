@@ -304,7 +304,7 @@ router.post("/google-signin", async (req, res) => {
   let token, accessToken, refreshToken;
 
   // Definir redirect_uri según el entorno
-  const redirectUri = req.body.redirect_uri || process.env.REDIRECT_URI || "http://localhost:3001";
+  const redirectUri = req.body.redirect_uri || process.env.REDIRECT_URI;;
 
   // Flujo con código de autorización (web)
   if (req.body.code) {

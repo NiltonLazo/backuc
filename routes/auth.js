@@ -458,9 +458,9 @@ router.post("/asignar-horario", async (req, res) => {
  * Obtiene los horarios disponibles de los psicólogos en una sede y fecha determinada.
  */
 router.get("/horarios-disponibles", async (req, res) => {
-  const { modalidad, sede, fecha } = req.query;
+  const { sede, fecha } = req.query;
   try {
-    // Validar fecha
+    // Validar que la fecha tenga el formato correcto
     if (!fecha || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
       return res.status(400).json({ error: "Fecha inválida. Debe estar en formato YYYY-MM-DD." });
     }
@@ -476,35 +476,31 @@ router.get("/horarios-disponibles", async (req, res) => {
       return res.status(400).json({ error: "Solo se pueden ver horarios hasta 15 días a partir de hoy." });
     }
     
-    // Filtrar psicólogos por sede (y modalidad si se requiere, aquí se filtra por sede)
+    // Filtrar psicólogos por sede (independientemente de la modalidad)
     const filtroSede = sede && sede.trim() !== "" ? { sede: sede.trim() } : {};
+    
+    // Buscar psicólogos aplicando el filtro de sede
     const psicologos = await prisma.psicologo.findMany({
       where: {
         ...filtroSede
       },
-      // Puedes seguir incluyendo otros campos si es necesario
     });
     
     let slotsTotal = [];
     
     for (const psicologo of psicologos) {
-      // Verifica que el psicólogo tenga token de Calendar
+      // Verificar que el psicólogo tenga token de Calendar
       if (!psicologo.calendarAccessToken) continue;
       
-      // Obtén los eventos de disponibilidad (bloques con "CITAS")
+      // Obtener eventos de disponibilidad y eventos ocupados del calendario
       const availableEvents = await getAvailableEvents(psicologo.calendarAccessToken, fecha);
-      // Obtén los eventos ocupados (eventos que bloquean tiempo)
       const busyEvents = await getBusyEvents(psicologo.calendarAccessToken, fecha);
       
-      console.log(`Disponibles para psicólogo ${psicologo.id}:`, availableEvents);
-      console.log(`Ocupados para psicólogo ${psicologo.id}:`, busyEvents);
-      
-      // Para cada bloque de disponibilidad, calcular los intervalos libres restando busyEvents
+      // Para cada bloque de disponibilidad, calcular los intervalos libres
       for (const availEvent of availableEvents) {
         const rangeStart = new Date(availEvent.start.dateTime || availEvent.start.date);
         const rangeEnd = new Date(availEvent.end.dateTime || availEvent.end.date);
         const freeIntervals = computeFreeIntervals(rangeStart, rangeEnd, busyEvents);
-        console.log(`Intervalos libres para ${psicologo.nombre} en evento ${availEvent.id}:`, freeIntervals);
         
         // Dividir cada intervalo en slots de 60 minutos
         for (const interval of freeIntervals) {
@@ -530,9 +526,8 @@ router.get("/horarios-disponibles", async (req, res) => {
       }
     }
     
-    // Opcionalmente, deduplicar slots (en caso de solapamientos)
+    // Deduplicar slots en caso de solapamientos
     const uniqueSlots = Array.from(new Map(slotsTotal.map(slot => [slot.id, slot])).values());
-    console.log("Slots únicos:", uniqueSlots);
     
     res.json({ horarios: uniqueSlots });
   } catch (error) {

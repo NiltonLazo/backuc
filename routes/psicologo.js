@@ -439,24 +439,35 @@ router.get("/cita-pendiente", async (req, res) => {
  */
 
 /**
- * GET /psicologo/reporte
- * Devuelve todos los registros de citas junto con la información del estudiante y atención.
+ * GET /psicologo/reporte?psicologoId=...
+ * Devuelve solo los registros de citas del psicólogo que inició sesión.
  */
 router.get('/reporte', async (req, res) => {
+  const { psicologoId } = req.query;
+
+  if (!psicologoId) {
+    return res.status(400).json({ error: "Se requiere 'psicologoId'" });
+  }
+
   try {
     const citas = await prisma.cita.findMany({
+      where: {
+        psicologoId: Number(psicologoId), // Asegura que se pase como número
+      },
       include: {
         estudiante: true,
         atencionCita: true,
       },
       orderBy: { id: 'asc' },
     });
+
     res.json({ data: citas });
   } catch (error) {
     console.error("Error al obtener el reporte:", error);
     res.status(500).json({ error: "Error interno del servidor" });
   }
 });
+
 
 /**
  * GET /cita/followup/:id

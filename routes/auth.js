@@ -370,7 +370,7 @@ router.post("/google-signin", async (req, res) => {
  * Actualiza o crea el perfil del usuario según su rol.
  */
 router.put("/update-profile", async (req, res) => {
-  const { id, telefono, sede, ciclo, carrera, modalidad, rol } = req.body;
+  const { id, telefono, sede, ciclo, carrera, modalidad, rol, fechaNacimiento } = req.body;
   const phoneRegex = /^9\d{8}$/;
   
   // Validar que el teléfono esté presente y sea correcto
@@ -392,6 +392,14 @@ router.put("/update-profile", async (req, res) => {
       if (isNaN(cicloInt)) {
         return res.status(400).json({ error: "Ciclo debe ser un número válido" });
       }
+      
+      // Convertir fechaNacimiento del formato "dd/MM/yyyy" a Date (si se envía)
+      let fechaNacimientoDate;
+      if (fechaNacimiento) {
+        const [day, month, year] = fechaNacimiento.split("/");
+        fechaNacimientoDate = new Date(year, month - 1, day);
+      }
+
       usuario = await prisma.estudiante.update({
         where: { id },
         data: {
@@ -400,6 +408,7 @@ router.put("/update-profile", async (req, res) => {
           ciclo: cicloInt,
           carrera,
           modalidad: modalidad.toLowerCase().replace(" ", "_"),
+          ...(fechaNacimientoDate ? { fechaNacimiento: fechaNacimientoDate } : {})
         },
       });
     } else if (rol === "psicologo") {

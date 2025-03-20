@@ -41,6 +41,7 @@ model Estudiante {
   ciclo                Int?
   carrera              String?
   modalidad            Modalidad?
+  fechaNacimiento      DateTime? @db.Date
   calendarAccessToken  String?   @db.Text
   calendarRefreshToken String?
   calendarTokenExpiry  DateTime?
@@ -205,6 +206,7 @@ model AtencionCita {
   recomendaciones       String?                   @db.Text
   // Campo para cuando la cita no fue asistida:
   observaciones         String?                   @db.Text
+  followUpRequested     Boolean? 
   creadaEn              DateTime                  @default(now())
   updatedAt             DateTime                  @updatedAt
 }

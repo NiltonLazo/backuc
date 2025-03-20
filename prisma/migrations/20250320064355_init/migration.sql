@@ -22,6 +22,7 @@ CREATE TABLE `Estudiante` (
     `ciclo` INTEGER NULL,
     `carrera` VARCHAR(191) NULL,
     `modalidad` ENUM('presencial', 'semipresencial', 'a_distancia') NULL,
+    `fechaNacimiento` DATE NULL,
     `calendarAccessToken` TEXT NULL,
     `calendarRefreshToken` VARCHAR(191) NULL,
     `calendarTokenExpiry` DATETIME(3) NULL,
@@ -169,6 +170,7 @@ CREATE TABLE `AtencionCita` (
     `medioContacto` ENUM('boca_a_boca', 'protocolo_de_salud_mental', 'entrevistas_de_vinculacion', 'correo_electronico', 'talleres_preventivos', 'citas_automatizadas', 'onboarding', 'app_movil') NULL,
     `recomendaciones` TEXT NULL,
     `observaciones` TEXT NULL,
+    `followUpRequested` BOOLEAN NULL,
     `creadaEn` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
     `updatedAt` DATETIME(3) NOT NULL,
 

@@ -32,10 +32,8 @@ async function getCalendarEvents(accessToken, fecha) {
     const oauth2Client = new OAuth2Client();
     oauth2Client.setCredentials({ access_token: accessToken });
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
-    const timeMin = new Date(fecha);
-    timeMin.setHours(0, 0, 0, 0);
-    const timeMax = new Date(fecha);
-    timeMax.setHours(23, 59, 59, 999);
+    const timeMin = new Date(`${fecha}T00:00:00-05:00`);
+    const timeMax = new Date(`${fecha}T23:59:59-05:00`);
     const response = await calendar.events.list({
       calendarId: 'primary',
       timeMin: timeMin.toISOString(),
@@ -53,15 +51,15 @@ async function getCalendarEvents(accessToken, fecha) {
   }
 }
 
-// Crear evento en Google Calendar (con Meet si es virtual)
+// Función para crear un evento en Google Calendar (con Meet si es virtual)
 async function createCalendarEvent(accessToken, summary, description, startDateTime, endDateTime, attendeesEmails, isVirtual) {
   try {
     const oauth2Client = new OAuth2Client();
     oauth2Client.setCredentials({ access_token: accessToken });
     const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
     const event = {
-      summary: summary,
-      description: description,
+      summary,
+      description,
       start: { dateTime: startDateTime, timeZone: 'America/Lima' },
       end: { dateTime: endDateTime, timeZone: 'America/Lima' },
       attendees: attendeesEmails.map(email => ({ email })),
@@ -81,21 +79,39 @@ async function createCalendarEvent(accessToken, summary, description, startDateT
       sendUpdates: 'all'
     });
     console.log("Evento creado, respuesta:", response.data);
+    const eventId = response.data.id;
+    let meetLink = null;
     if (isVirtual) {
-      return response.data.conferenceData &&
-             response.data.conferenceData.entryPoints &&
-             response.data.conferenceData.entryPoints.length > 0
-             ? response.data.conferenceData.entryPoints[0].uri
-             : null;
-    } else {
-      return response.data.id;
+      meetLink = response.data.conferenceData &&
+                 response.data.conferenceData.entryPoints &&
+                 response.data.conferenceData.entryPoints.length > 0
+                 ? response.data.conferenceData.entryPoints[0].uri
+                 : null;
     }
+    return { eventId, meetLink };
   } catch (error) {
     console.error("Error al crear evento en Calendar:", error.message);
     if (error.response && error.response.data) {
       console.error("Detalles del error:", error.response.data);
     }
     return null;
+  }
+}
+
+// Función helper para eliminar un evento del Calendar
+async function deleteCalendarEvent(calendarEventId, accessToken) {
+  try {
+    const oauth2Client = new OAuth2Client();
+    oauth2Client.setCredentials({ access_token: accessToken });
+    const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    await calendar.events.delete({
+      calendarId: 'primary',
+      eventId: calendarEventId,
+    });
+    console.log("Evento eliminado del Calendar.");
+  } catch (error) {
+    console.error("Error al eliminar el evento de Calendar:", error.message);
+    throw error;
   }
 }
 
@@ -176,7 +192,17 @@ router.get('/cita/:id', async (req, res) => {
   try {
     const cita = await prisma.cita.findUnique({
       where: { id: parseInt(id, 10) },
-      include: { estudiante: true, psicologo: true, atencionCita: true },
+      include: { 
+        estudiante: true, 
+        psicologo: true, 
+        atencionCita: true,
+        citaPrevia: { 
+          include: { 
+            atencionCita: true, 
+            citaPrevia: true 
+          } 
+        }
+      }
     });
     if (!cita) {
       return res.status(404).json({ error: "Cita no encontrada" });
@@ -195,7 +221,7 @@ router.put('/cita/:id', async (req, res) => {
   const { id } = req.params;
   console.log("Payload recibido en PUT /cita/:id:", req.body);
   
-  const { estado, psicologoId, areaDerivacion, diagnosticoPresuntivo, medioContacto, recomendaciones, observaciones } = req.body;
+  const { estado, psicologoId, areaDerivacion, diagnosticoPresuntivo, medioContacto, recomendaciones, observaciones, followUpRequested } = req.body;
   
   try {
     const updatedCita = await prisma.cita.update({
@@ -210,7 +236,8 @@ router.put('/cita/:id', async (req, res) => {
         diagnosticoPresuntivo,
         medioContacto,
         recomendaciones,
-        observaciones
+        observaciones,
+        followUpRequested
       };
     } else if (estado === 'no_asistio') {
       atencionData = { observaciones };
@@ -334,12 +361,18 @@ router.post("/reservar-cita", async (req, res) => {
     }
     
     const now = new Date();
-    const minReservaFull = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    let minReservaFull;
+    if (citaPreviaId) {
+      // Para citas de seguimiento se permite reservar desde 24 horas de anticipación
+      minReservaFull = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    } else {
+      minReservaFull = new Date(now.getTime() + 48 * 60 * 60 * 1000);
+    }
     const minReservaDate = new Date(minReservaFull.getFullYear(), minReservaFull.getMonth(), minReservaFull.getDate());
     if (fechaDate < minReservaDate) {
       const dias = ["domingo", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado"];
       const diaDisponible = dias[minReservaDate.getDay()];
-      return res.status(400).json({ error: `Para reservar una cita debe ser con 48 horas de anticipación, puede reservar su cita a partir del día ${diaDisponible}.` });
+      return res.status(400).json({ error: `Para reservar una cita debe ser con ${citaPreviaId ? "24" : "48"} horas de anticipación, puede reservar su cita a partir del día ${diaDisponible}.` });
     }
     
     const citaPendiente = await prisma.cita.findFirst({
@@ -372,8 +405,7 @@ router.post("/reservar-cita", async (req, res) => {
     }
     
     let cita = await prisma.cita.create({ data });
-    
-    // Crear evento en Google Calendar:
+
     const tokenToUse = psicologo.calendarAccessToken;
     if (tokenToUse) {
       const startDateTimeLocal = `${fecha}T${hora}:00`;
@@ -381,7 +413,7 @@ router.post("/reservar-cita", async (req, res) => {
       const endHour = (parseInt(hourPart, 10) + 1).toString().padStart(2, "0");
       const endDateTimeLocal = `${fecha}T${endHour}:${minutePart}:00`;
       const isVirtual = modalidad.toLowerCase() === "virtual";
-      // Se agregan los correos tanto del psicólogo como del estudiante
+      
       const eventResult = await createCalendarEvent(
         tokenToUse,
         "Cita de Psicología",
@@ -391,15 +423,14 @@ router.post("/reservar-cita", async (req, res) => {
         [psicologo.correo, estudiante.correo],
         isVirtual
       );
-      if (isVirtual && eventResult) {
+      
+      if (eventResult) {
         cita = await prisma.cita.update({
           where: { id: cita.id },
-          data: { meetLink: eventResult },
-        });
-      } else if (!isVirtual) {
-        cita = await prisma.cita.update({
-          where: { id: cita.id },
-          data: { meetLink: null },
+          data: {
+            calendarEventId: eventResult.eventId, // Se guarda el ID del evento
+            meetLink: isVirtual ? eventResult.meetLink : null
+          }
         });
       }
     }
@@ -489,6 +520,201 @@ router.get('/cita/followup/:id', async (req, res) => {
   } catch (error) {
     console.error("Error al obtener la cita de seguimiento:", error);
     res.status(500).json({ error: "Error en el servidor" });
+  }
+});
+
+// Nueva ruta para buscar estudiante por código
+router.get("/buscar-estudiante", async (req, res) => {
+  const { codigo } = req.query;
+  if (!codigo) {
+    return res.status(400).json({ error: "El código es requerido." });
+  }
+  try {
+    const estudiante = await prisma.estudiante.findUnique({
+      where: { codigo: codigo }
+    });
+    if (!estudiante) {
+      return res.status(404).json({ error: "Estudiante no registrado" });
+    }
+    // Se retorna también el id del estudiante
+    res.json({ estudiante: { id: estudiante.id, nombre: estudiante.nombre, codigo: estudiante.codigo, fechaNacimiento: estudiante.fechaNacimiento } });
+  } catch (error) {
+    console.error("Error al buscar estudiante:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+// Dentro de psicologo.js
+router.post("/derivacion-cita", async (req, res) => {
+  const { estudianteId, psicologoId, motivo } = req.body;
+  try {
+    // Verifica que el estudiante y el psicólogo existan
+    const estudiante = await prisma.estudiante.findUnique({ where: { id: parseInt(estudianteId, 10) } });
+    const psicologo = await prisma.psicologo.findUnique({ where: { id: parseInt(psicologoId, 10) } });
+    if (!estudiante || !psicologo) {
+      return res.status(404).json({ error: "Estudiante o psicólogo no encontrado." });
+    }
+    
+    // Obtener fecha y hora actuales en America/Lima
+    const now = new Date(new Date().toLocaleString("en-US", { timeZone: "America/Lima" }));
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, "0");
+    const day = String(now.getDate()).padStart(2, "0");
+    const fecha = `${year}-${month}-${day}`;
+    
+    const hours = String(now.getHours()).padStart(2, "0");
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    const hora = `${hours}:${minutes}`;
+    
+    // Crear la cita con estado "atendida" y sin meetLink ni calendarEventId
+    const cita = await prisma.cita.create({
+      data: {
+        estudianteId: parseInt(estudianteId, 10),
+        psicologoId: parseInt(psicologoId, 10),
+        motivo,
+        fecha: new Date(`${fecha}T00:00:00-05:00`),
+        hora,
+        tipo: "presencial",
+        estado: "atendida",
+      },
+    });
+    
+    res.json({ message: "Cita de derivación registrada correctamente", cita });
+  } catch (error) {
+    console.error("Error en derivacion-cita:", error);
+    res.status(500).json({ error: "Error interno del servidor" });
+  }
+});
+
+/**
+ * PUT /cita/followup/:id/reprogramar
+ * Reprograma la cita de seguimiento: elimina el evento anterior y crea uno nuevo con la nueva fecha/hora.
+ * Se espera recibir en el body:
+ *   - fecha: "YYYY-MM-DD"
+ *   - hora: "HH:mm"
+ *   - modalidad: "virtual" o "presencial" (opcional, si aplica)
+ */
+router.put('/cita/followup/:followUpId/reprogramar', async (req, res) => {
+  const { followUpId } = req.params;
+  const { fecha, hora, modalidad, cancel } = req.body;
+
+  // Si no se está cancelando, modalidad es obligatoria
+  if (!cancel && (!modalidad || typeof modalidad !== 'string')) {
+    return res.status(400).json({ error: "El campo 'modalidad' es obligatorio y debe ser una cadena." });
+  }
+
+  try {
+    // Buscar la cita de seguimiento de partida por su id
+    let currentFollowUp = await prisma.cita.findUnique({
+      where: { id: parseInt(followUpId, 10) },
+      include: { psicologo: true, estudiante: true }
+    });
+    if (!currentFollowUp) {
+      return res.status(404).json({ error: "Cita de seguimiento no encontrada." });
+    }
+
+    // Recorrer la cadena para obtener la última cita de seguimiento pendiente
+    let lastFollowUp = currentFollowUp;
+    while (true) {
+      const next = await prisma.cita.findFirst({
+        where: { citaPreviaId: lastFollowUp.id },
+        include: { psicologo: true, estudiante: true }
+      });
+      if (!next) break;
+      lastFollowUp = next;
+    }
+
+    // Si se envía cancel: true, se cancela la última cita de seguimiento
+    if (cancel) {
+      if (lastFollowUp.calendarEventId && lastFollowUp.psicologo.calendarAccessToken) {
+        try {
+          await deleteCalendarEvent(lastFollowUp.calendarEventId, lastFollowUp.psicologo.calendarAccessToken);
+          console.log("Evento anterior eliminado del Calendar.");
+        } catch (err) {
+          console.error("Error al eliminar el evento anterior:", err.message);
+          // Continúa el proceso aun si falla la eliminación en Calendar
+        }
+      }
+      const updatedCita = await prisma.cita.update({
+        where: { id: lastFollowUp.id },
+        data: {
+          estado: 'cancelada',
+          calendarEventId: null,
+          meetLink: null,
+        },
+      });
+      return res.json({ message: "Cita de seguimiento cancelada correctamente", cita: updatedCita });
+    }
+
+    // Para reprogramar se requieren 'fecha' y 'hora'
+    if (!fecha || !hora) {
+      return res.status(400).json({ error: "Se requieren 'fecha' y 'hora' para reprogramar la cita de seguimiento." });
+    }
+
+    // Eliminar el evento anterior del Calendar, si existe
+    if (lastFollowUp.calendarEventId && lastFollowUp.psicologo.calendarAccessToken) {
+      try {
+        await deleteCalendarEvent(lastFollowUp.calendarEventId, lastFollowUp.psicologo.calendarAccessToken);
+        console.log("Evento anterior eliminado del Calendar.");
+      } catch (err) {
+        console.error("Error al eliminar el evento anterior:", err.message);
+      }
+    }
+
+    // Marcar la última cita de seguimiento como reprogramada
+    await prisma.cita.update({
+      where: { id: lastFollowUp.id },
+      data: { estado: 'reprogramada' }
+    });
+
+    // Calcular los datos para el nuevo evento (duración de 60 minutos)
+    const startDateTimeLocal = `${fecha}T${hora}:00`;
+    const [hourPart, minutePart] = hora.split(":");
+    const endHour = (parseInt(hourPart, 10) + 1).toString().padStart(2, "0");
+    const endDateTimeLocal = `${fecha}T${endHour}:${minutePart}:00`;
+    const isVirtual = modalidad.toLowerCase() === "virtual";
+
+    let newEventData = null;
+    let newEventId = null;
+    let newMeetLink = null;
+    if (lastFollowUp.psicologo.calendarAccessToken) {
+      newEventData = await createCalendarEvent(
+        lastFollowUp.psicologo.calendarAccessToken,
+        "Cita de seguimiento reprogramada",
+        "Reprogramación de cita de seguimiento",
+        startDateTimeLocal,
+        endDateTimeLocal,
+        [lastFollowUp.psicologo.correo, lastFollowUp.estudiante.correo],
+        isVirtual
+      );
+      if (newEventData) {
+        newEventId = newEventData.eventId;
+        if (isVirtual) {
+          newMeetLink = newEventData.meetLink;
+        }
+      }
+    }
+
+    // Crear una nueva cita de seguimiento (pendiente) con la última cita encontrada como referencia
+    const newFollowUp = await prisma.cita.create({
+      data: {
+        estudianteId: lastFollowUp.estudiante.id,
+        psicologoId: lastFollowUp.psicologo.id,
+        citaPreviaId: lastFollowUp.id,
+        motivo: lastFollowUp.motivo,
+        fecha: new Date(`${fecha}T00:00:00-05:00`),
+        hora,
+        tipo: modalidad,
+        estado: 'pendiente',
+        calendarEventId: newEventId,
+        meetLink: newMeetLink,
+      }
+    });
+
+    return res.json({ message: "Cita de seguimiento reprogramada correctamente", cita: newFollowUp });
+  } catch (error) {
+    console.error("Error al reprogramar la cita de seguimiento:", error);
+    return res.status(500).json({ error: "Error interno del servidor" });
   }
 });
 

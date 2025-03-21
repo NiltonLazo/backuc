@@ -51,9 +51,10 @@ async function getBusyEvents(accessToken, fecha) {
       orderBy: 'startTime'
     });
     const events = response.data.items || [];
-    // Excluir eventos que sean de disponibilidad (es decir, aquellos cuyo título incluya "CITAS")
+    // Filtrar: excluir eventos que contengan "CITAS" y además los eventos all-day (los que tienen "date" en vez de "dateTime")
     return events.filter(event => {
-      return !(event.summary && event.summary.toUpperCase().includes("CITAS"));
+      const isAllDay = !event.start.dateTime && event.start.date;
+      return !(event.summary && event.summary.toUpperCase().includes("CITAS")) && !isAllDay;
     });
   } catch (error) {
     console.error("Error al obtener eventos ocupados:", error.message);
@@ -494,26 +495,39 @@ router.get("/horarios-disponibles", async (req, res) => {
         ...filtroSede
       },
     });
+    console.log("Psicólogos encontrados con sede:", sede, psicologos.map(p => p.correo));
     
     let slotsTotal = [];
     
     for (const psicologo of psicologos) {
       // Verificar que el psicólogo tenga token de Calendar
-      if (!psicologo.calendarAccessToken) continue;
+      if (!psicologo.calendarAccessToken) {
+        console.log(`El psicólogo ${psicologo.correo} no tiene calendarAccessToken.`);
+        continue;
+      }
       
       // Obtener eventos de disponibilidad y eventos ocupados del calendario
       const availableEvents = await getAvailableEvents(psicologo.calendarAccessToken, fecha);
       const busyEvents = await getBusyEvents(psicologo.calendarAccessToken, fecha);
+
+      console.log(`Para ${psicologo.correo}:`);
+      console.log("  Eventos disponibles:", availableEvents);
+      console.log("  Eventos ocupados:", busyEvents);
       
       // Para cada bloque de disponibilidad, calcular los intervalos libres
       for (const availEvent of availableEvents) {
         const rangeStart = new Date(availEvent.start.dateTime || availEvent.start.date);
         const rangeEnd = new Date(availEvent.end.dateTime || availEvent.end.date);
+        console.log(`  Evento CITAS desde ${rangeStart} hasta ${rangeEnd}`);
+
         const freeIntervals = computeFreeIntervals(rangeStart, rangeEnd, busyEvents);
+        console.log("  Intervalos libres calculados:", freeIntervals);
         
         // Dividir cada intervalo en slots de 60 minutos
         for (const interval of freeIntervals) {
           const slots = subdivideInterval(interval, 60);
+          console.log(`  Slots generados para el intervalo ${interval.start} - ${interval.end}:`, slots);
+
           const mappedSlots = slots.map(slot => {
             const horaStr = slot.start.toLocaleTimeString("es-PE", {
               timeZone: "America/Lima",
@@ -535,8 +549,12 @@ router.get("/horarios-disponibles", async (req, res) => {
       }
     }
     
-    // Deduplicar slots en caso de solapamientos
+    // Después del ciclo que acumula todos los slots en slotsTotal
+    console.log("Slots totales antes de deduplicar:", slotsTotal);
+
+    // Deduplicar slots
     const uniqueSlots = Array.from(new Map(slotsTotal.map(slot => [slot.id, slot])).values());
+    console.log("Slots únicos generados:", uniqueSlots);
     
     res.json({ horarios: uniqueSlots });
   } catch (error) {
